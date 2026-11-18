@@ -1,4 +1,4 @@
-# Treasure Hunt — game logic core (section 1.6: Spass defines the world,
+# Treasure Hunt — game logic core (Spass defines the world,
 # the Java front end only renders and feeds commands).
 #
 # The `game` sequence is the resident world (started by the runner's

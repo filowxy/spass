@@ -3,7 +3,7 @@ import java.net.*;
 import java.util.*;
 
 /**
- * Voxel terrain renderer (section 1.6 — 3D).
+ * Voxel terrain renderer (3D).
  *
  * Spass (examples/voxel) generates an 8x8x8 voxel volume as a resident
  * world: terrain surface (layered sines), materials (air/stone/water/
@@ -40,7 +40,7 @@ public class VoxelTerrain {
             try {
                 ensureConn();
                 byte[] body = json.getBytes("UTF-8");
-                out.writeInt(body.length); // big-endian, matches section 9.2
+                out.writeInt(body.length); // big-endian frame header
                 out.write(body);
                 out.flush();
                 int len = in.readInt();

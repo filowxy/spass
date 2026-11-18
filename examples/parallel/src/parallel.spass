@@ -1,4 +1,4 @@
-# Section 5.4: `parallel f(xs, ys)` calls `f` once per list index and
+# `parallel f(xs, ys)` calls `f` once per list index and
 # returns a task. Awaiting that task yields the list of results.
 func pair(a: float, b: float): float {
     return a + b

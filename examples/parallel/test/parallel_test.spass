@@ -1,4 +1,4 @@
-# Section 8: the batch result is the per-index list of calls.
+# The batch result is the per-index list of calls.
 test "parallel with two list arguments" with {
     expected: float = 66.0
 } {

@@ -1,4 +1,4 @@
-# Section 8: the picked value stays inside the candidate range, and the
+# The picked value stays inside the candidate range, and the
 # picked function is one of the declared candidates.
 test "value pick stays inside the candidate set" {
     let v: float = pick_float()

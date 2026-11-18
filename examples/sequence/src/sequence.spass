@@ -1,4 +1,4 @@
-# Section 10.3: sequences + message passing. The producer sends three
+# Sequences + message passing. The producer sends three
 # Ping messages to the consumer's queue; the consumer receives them
 # (blocking on its own queue, filtered by the Ping{...} pattern), sums
 # them, and writes the total out through the file channel. driver(1.0)

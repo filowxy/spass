@@ -1,4 +1,4 @@
-# Section 13c: set/get through the runner. An external program sets the
+# Set/get through the runner. An external program sets the
 # "scale" channel via the runner; `poll` reads it through the file slot
 # (read = freshest value) and doubles it. `publish` writes a value to
 # the "measurement" channel which the external program can get back.

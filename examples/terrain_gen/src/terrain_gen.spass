@@ -1,4 +1,4 @@
-# Terrain generator (section 1.6: Spass generates the world, Java renders).
+# Terrain generator (Spass generates the world, Java renders).
 #
 # The `gen` sequence runs in the resident world: for each of the 16x16
 # tiles it computes a height (layered sines — a cheap stand-in for the
