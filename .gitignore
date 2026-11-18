@@ -39,6 +39,7 @@ __pycache__/
 /start_req.json
 /lib.rs
 *.log
+TAPR-public-*.md
 
 # OS / editor junk
 .DS_Store
