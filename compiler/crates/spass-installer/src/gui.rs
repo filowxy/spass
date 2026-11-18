@@ -136,15 +136,43 @@ struct TRACKMOUSEEVENT {
     dw_hover_time: u32,
 }
 
-/// `WM_DRAWITEM`'s payload. Field order and types are fixed by the SDK.
+/// `WM_DRAWITEM`'s payload. Field order, types and x64 padding are fixed by
+/// the SDK - every field must be present or the ones after it are read from
+/// the wrong offset and the owner-draw callback paints into a garbage HDC.
 #[repr(C)]
 struct DRAWITEMSTRUCT {
-    hltype: UINT,
-    hwnd: HWND,
-    hDC: HDC,
-    rcItem: RECT,
-    itemState: u32,
-    itemData: usize,
+    ctl_type: UINT,      // CtlType
+    ctl_id: UINT,        // CtlID - the control id we look the button up by
+    item_id: UINT,       // itemID
+    item_action: UINT,   // itemAction
+    item_state: UINT,    // itemState (ODS_* flags)
+    hwnd_item: HWND,     // hwndItem
+    hdc: HDC,            // hDC
+    rc_item: RECT,       // rcItem
+    item_data: usize,    // itemData
+}
+
+#[cfg(test)]
+mod drawitem_layout_tests {
+    use super::*;
+
+    /// The field offsets are fixed by the Windows SDK. Getting one wrong
+    /// makes owner-draw paint into a garbage HDC and every button degrades
+    /// to a flat grey system square, so pin all offsets down.
+    #[test]
+    #[cfg(windows)]
+    fn drawitem_struct_field_offsets() {
+        assert_eq!(std::mem::offset_of!(DRAWITEMSTRUCT, ctl_type), 0);
+        assert_eq!(std::mem::offset_of!(DRAWITEMSTRUCT, ctl_id), 4);
+        assert_eq!(std::mem::offset_of!(DRAWITEMSTRUCT, item_id), 8);
+        assert_eq!(std::mem::offset_of!(DRAWITEMSTRUCT, item_action), 12);
+        assert_eq!(std::mem::offset_of!(DRAWITEMSTRUCT, item_state), 16);
+        assert_eq!(std::mem::offset_of!(DRAWITEMSTRUCT, hwnd_item), 24);
+        assert_eq!(std::mem::offset_of!(DRAWITEMSTRUCT, hdc), 32);
+        assert_eq!(std::mem::offset_of!(DRAWITEMSTRUCT, rc_item), 40);
+        assert_eq!(std::mem::offset_of!(DRAWITEMSTRUCT, item_data), 56);
+        assert_eq!(std::mem::size_of::<DRAWITEMSTRUCT>(), 64);
+    }
 }
 
 /// `ODS_*` flags carried in `DRAWITEMSTRUCT::itemState`.
@@ -1063,15 +1091,15 @@ unsafe extern "system" fn wnd_proc(
             // state comes from the parent's own copy, so nothing is sent back
             // into the control while it may still be mid-creation.
             let dis = &*(lparam as *const DRAWITEMSTRUCT);
-            if dis.hltype == ODT_BUTTON {
-                let id = GetDlgCtrlID(dis.hwnd as HWND) as isize;
-                let mut state = dis.itemState;
+            if dis.ctl_type == ODT_BUTTON {
+                let id = dis.ctl_id as isize;
+                let mut state = dis.item_state;
                 if let Some(ui) = Ui::from_hwnd(hwnd) {
                     if let Some(b) = ui.buttons.iter().find(|b| b.id == id) {
                         if b.hovered {
                             state |= ODS_HOTLIGHT;
                         }
-                        draw_button(dis.hDC, btn_art(), b, state);
+                        draw_button(dis.hdc, btn_art(), b, state);
                     }
                 }
             }
@@ -1493,10 +1521,10 @@ pub fn run(opts: &crate::Opts, reporter: Arc<GuiReporter>) -> i32 {
 
         // Fonts, then brushes, then controls. The fonts must exist before
         // any control asks for one.
-        let f_title = theme::make_font(20, true).unwrap_or(0);
-        let f_sub = theme::make_font(10, false).unwrap_or(0);
-        let f_body = theme::make_font(10, false).unwrap_or(0);
-        let f_section = theme::make_font(10, true).unwrap_or(0);
+        let f_title = theme::make_font(22, true).unwrap_or(0);
+        let f_sub = theme::make_font(12, false).unwrap_or(0);
+        let f_body = theme::make_font(12, false).unwrap_or(0);
+        let f_section = theme::make_font(11, true).unwrap_or(0);
         let f_mono = theme::make_mono_font(9).unwrap_or(0);
 
         let b_accent = theme::create_brush(theme::ACCENT).unwrap_or(0);
@@ -1537,7 +1565,14 @@ pub fn run(opts: &crate::Opts, reporter: Arc<GuiReporter>) -> i32 {
         let mut cr = RECT { left: 0, top: 0, right: 0, bottom: 0 };
         GetClientRect(hwnd, &mut cr);
         let client_w = if cr.right - cr.left > 0 { cr.right - cr.left } else { win_w };
-        let client_h = if cr.bottom - cr.top > 0 { cr.bottom - cr.top } else { win_h };
+        // `win_h` includes the title bar and borders; using it as a fallback
+        // for the *client* height pushes the footer controls below the real
+        // client edge, where they get clipped. Reserve space for the frame.
+        let client_h = if cr.bottom - cr.top > 0 {
+            cr.bottom - cr.top
+        } else {
+            win_h - s(56)
+        };
         // Control columns follow the real width so the row still lines up
         // if the user resizes the window.
         let field_w = client_w - pad * 2;

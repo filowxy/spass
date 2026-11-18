@@ -48,17 +48,22 @@ extern "system" {
     fn GetProcAddress(module: *mut c_void, name: *const u8) -> *mut c_void;
 }
 
+#[cfg(test)]
+#[link(name = "user32")]
+extern "system" {
+    fn GetDC(hwnd: isize) -> HDC;
+    fn ReleaseDC(hwnd: isize, dc: HDC) -> c_int;
+}
+
 const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x0000_0800;
 
-/// `CreateFontW` takes 14 scalar arguments before the `LOGFONTW` pointer:
-/// cHeight, cWidth, cEscapement, cOrientation, cWeight, bItalic, bUnderline,
-/// bStrikeOut, iCharSet, iOutPrecision, iClipPrecision, iQuality,
-/// iPitchAndFamily -thirteen -plus the struct. The struct's fields supply
-/// the first thirteen, and the call passes them positionally, so the pointer
-/// is the fourteenth parameter.
-type CreateFontWFn = unsafe extern "system" fn(
-    i32, i32, i32, i32, i32, u32, u32, u32, u32, u32, u32, u32, u32, *const LOGFONTW,
-) -> HFONT;
+/// `CreateFontIndirectW` takes one pointer to a fully specified `LOGFONTW`.
+/// This is what we want: the face name lives inside the struct, so there is
+/// no way to pass a wrong pointer for it. (`CreateFontW` would need the face
+/// name as a separate `LPCWSTR` argument - passing `&lf` there makes Windows
+/// read the struct's bytes as a UTF-16 string and fall back to a mangled
+/// default font, which is exactly the squashed-text bug we hit.)
+type CreateFontIndirectWFn = unsafe extern "system" fn(*const LOGFONTW) -> HFONT;
 type DeleteObjectFn = unsafe extern "system" fn(HGDIOBJ) -> i32;
 type CreateSolidBrushFn = unsafe extern "system" fn(u32) -> HBRUSH;
 type SetDCBrushColorFn = unsafe extern "system" fn(HDC, u32) -> u32;
@@ -91,7 +96,7 @@ pub struct RECT {
 }
 /// Every dynamically-resolved symbol we might use.
 pub struct Gdi {
-    pub create_font: Option<CreateFontWFn>,
+    pub create_font: Option<CreateFontIndirectWFn>,
     pub delete_object: Option<DeleteObjectFn>,
     pub create_solid_brush: Option<CreateSolidBrushFn>,
     pub set_dc_brush_color: Option<SetDCBrushColorFn>,
@@ -127,7 +132,7 @@ static GDI: OnceLock<Gdi> = OnceLock::new();
 pub fn gdi() -> &'static Gdi {
     GDI.get_or_init(|| unsafe {
         Gdi {
-            create_font: symbol("gdi32.dll", b"CreateFontW\0"),
+            create_font: symbol("gdi32.dll", b"CreateFontIndirectW\0"),
             delete_object: symbol("gdi32.dll", b"DeleteObject\0"),
             create_solid_brush: symbol("gdi32.dll", b"CreateSolidBrush\0"),
             set_dc_brush_color: symbol("gdi32.dll", b"SetDCBrushColor\0"),
@@ -205,12 +210,7 @@ pub fn make_font(size_pt: i32, bold: bool) -> Option<HFONT> {
         for (i, c) in "Segoe UI".encode_utf16().enumerate() {
             lf.lfFaceName[i] = c;
         }
-        Some(create(
-            lf.lfHeight, lf.lfWidth, lf.lfEscapement, lf.lfOrientation, lf.lfWeight,
-            lf.lfItalic as u32, lf.lfUnderline as u32, lf.lfStrikeOut as u32,
-            lf.lfCharSet as u32, lf.lfOutPrecision as u32, lf.lfClipPrecision as u32,
-            lf.lfQuality as u32, lf.lfPitchAndFamily as u32, &lf,
-        ))
+        Some(create(&lf))
     }
 }
 
@@ -232,12 +232,7 @@ pub fn make_mono_font(size_pt: i32) -> Option<HFONT> {
         for (i, c) in "Consolas".encode_utf16().enumerate() {
             lf.lfFaceName[i] = c;
         }
-        Some(create(
-            lf.lfHeight, lf.lfWidth, lf.lfEscapement, lf.lfOrientation, lf.lfWeight,
-            lf.lfItalic as u32, lf.lfUnderline as u32, lf.lfStrikeOut as u32,
-            lf.lfCharSet as u32, lf.lfOutPrecision as u32, lf.lfClipPrecision as u32,
-            lf.lfQuality as u32, lf.lfPitchAndFamily as u32, &lf,
-        ))
+        Some(create(&lf))
     }
 }
 
@@ -442,9 +437,50 @@ mod tests {
     /// Fonts must actually be creatable and carry the requested face.
     #[test]
     fn make_font_returns_a_usable_handle() {
-        let f = make_font(12, true).expect("CreateFontW should succeed");
-        assert_ne!(f, 0, "CreateFontW returned a null handle");
+        let f = make_font(12, true).expect("CreateFontIndirectW should succeed");
+        assert_ne!(f, 0, "CreateFontIndirectW returned a null handle");
         delete_object(f);
+    }
+
+    /// Read the real face name back from GDI. A wrong `CreateFont*` call can
+    /// still return a non-null handle for a mangled fallback font (that was
+    /// the "squashed text" bug), so a handle check alone is not enough.
+    #[test]
+    #[cfg(windows)]
+    fn font_face_is_what_we_asked_for() {
+        type GetTextFaceFn = unsafe extern "system" fn(HDC, c_int, *mut u16) -> c_int;
+        unsafe {
+            let get_face: GetTextFaceFn = symbol("gdi32.dll", b"GetTextFaceW\0")
+                .expect("gdi32!GetTextFaceW must resolve for this test");
+
+            let check = |font: HFONT, want: &str| {
+                // A desktop DC is safe to borrow here: this test only runs
+                // on Windows, where GetDC(0) is always available.
+                let dc = GetDC(0);
+                assert_ne!(dc, 0, "GetDC(0) failed");
+                let old = select_object(dc, font);
+                let mut buf = [0u16; 64];
+                get_face(dc, buf.len() as c_int, buf.as_mut_ptr());
+                select_object(dc, old);
+                ReleaseDC(0, dc);
+                let name = String::from_utf16_lossy(&buf)
+                    .trim_end_matches('\0')
+                    .to_string();
+                assert_eq!(
+                    name, want,
+                    "font came back as `{}`, expected `{}`",
+                    name, want
+                );
+            };
+
+            let f = make_font(12, true).expect("font");
+            check(f, "Segoe UI");
+            delete_object(f);
+
+            let m = make_mono_font(9).expect("mono font");
+            check(m, "Consolas");
+            delete_object(m);
+        }
     }
 
     #[test]
