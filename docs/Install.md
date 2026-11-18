@@ -10,8 +10,8 @@ Spass ships in two shapes:
   copy that one file anywhere and run it. No installer framework, no
   PowerShell, no admin rights.
 - **`spass-<version>-x64.msi`** — a Windows Installer package for the same
-  payload. It installs per user, needs no elevation, and is scriptable with
-  `msiexec`.
+  payload. It installs for all users under Program Files, requires
+  elevation, and is scriptable with `msiexec`.
 
 ## Install
 
@@ -48,8 +48,8 @@ after the MSI file has been rebuilt, because a rebuild keeps the product
 code but gets a new package code — `msiexec /x <msi path>` then no longer
 matches the install that the previous build of that file produced.
 
-The MSI installs the same files to the same place
-(`%LOCALAPPDATA%\Programs\Spass`), adds that folder to the user's `PATH`,
+The MSI installs the same files to
+`%ProgramFiles%\Spass`, adds that folder to the machine `PATH`,
 and creates a Start Menu shortcut. It has no interface of its own:
 `msiexec` shows its own progress bar, which is what you want for a
 scriptable package. `spass-setup.exe` remains the installer with a full
@@ -161,9 +161,10 @@ release build, and `-Version` to override the product version.
 The WiX source lives in `installer\spass.wxs`. Two things about it are
 deliberate:
 
-- The install is **per user** (`Scope="perUser"`, under
-  `%LOCALAPPDATA%\Programs\Spass`), so it never needs elevation and never
-  triggers UAC — the same contract as `spass-setup.exe`.
+- The install is **per machine** (`Scope="perMachine"`, under
+  `%ProgramFiles%\Spass`), so it writes the machine `PATH` and HKLM and
+  needs elevation. `spass-setup.exe` remains the per-user, no-elevation
+  installer.
 - The package carries **no interface of its own**. `msiexec` shows its own
   progress bar. A hand-written UI sequence would need the `InstallExecute`
   action to block on the install script, and that action is not in WiX v5's

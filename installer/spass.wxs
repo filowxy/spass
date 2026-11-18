@@ -9,7 +9,7 @@
            UpgradeCode="7F3C9A54-2D68-4B1E-9C07-5A8E36D24B90"
            ProductCode="$(var.ProductCode)"
            Language="1033"
-           Scope="perUser"
+           Scope="perMachine"
            Compressed="yes"
            InstallerVersion="500">
 
@@ -25,14 +25,13 @@
     <Property Id="ARPPRODUCTICON" Value="SpassExeFile" />
     <Property Id="ARPNOMODIFY" Value="1" />
 
-    <StandardDirectory Id="LocalAppDataFolder">
-      <Directory Id="ProgramsFolder" Name="Programs">
+    <StandardDirectory Id="ProgramFilesFolder">
         <Directory Id="INSTALLFOLDER" Name="Spass">
 
           <Component Id="SpassExe" Guid="1D8E4C70-93A5-4B62-8F1D-2C6B70A9E514">
             <File Id="SpassExeFile" Source="$(var.PayloadDir)\spass.exe" KeyPath="yes" />
               <!--
-              The install folder goes on the user's PATH. `Action="set"`
+              The install folder goes on the machine PATH. `Action="set"`
               appends to the existing PATH rather than replacing it, and
               the installer removes its own entry on uninstall.
             -->
@@ -41,7 +40,7 @@
                         Value="[INSTALLFOLDER]"
                         Part="last"
                         Action="set"
-                        System="no" />
+                        System="yes" />
                  <!-- The folder itself is not a component, so the uninstall
                  has to remove it explicitly. -->
             <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
@@ -67,7 +66,6 @@
           </Directory>
 
         </Directory>
-      </Directory>
     </StandardDirectory>
 
     <StandardDirectory Id="ProgramMenuFolder">
@@ -79,7 +77,7 @@
                     Target="[INSTALLFOLDER]spass.exe"
                     WorkingDirectory="INSTALLFOLDER" />
           <RemoveFolder Id="RemoveStartMenuFolder" On="uninstall" />
-          <RegistryValue Root="HKCU"
+          <RegistryValue Root="HKLM"
                          Key="Software\Spass Project\Spass"
                          Name="InstallDir"
                          Type="string"
@@ -92,7 +90,7 @@
       <!--
       The `.saple` file association: a package is a document, and opening
       one runs it through the saple runner. The keys live under the
-      user's own registry, so registering them never needs elevation.
+      machine registry, matching the per-machine install.
 
         Software\Classes\.saple                             -> spassfile.saple
         Software\Classes\spassfile.saple                    -> Spass Package
@@ -102,15 +100,15 @@
       uninstalled, so the machine is left as it was found.
     -->
     <Component Id="SapleFileAssociation" Guid="5F1A2C8E-6D3B-4F70-9A15-8C2E6D0B7A41">
-      <RegistryKey Root="HKCU" Key="Software\Classes\.saple"
+      <RegistryKey Root="HKLM" Key="Software\Classes\.saple"
                   ForceCreateOnInstall="yes" ForceDeleteOnUninstall="yes">
         <RegistryValue Type="string" Value="spassfile.saple" KeyPath="yes" />
       </RegistryKey>
-      <RegistryKey Root="HKCU" Key="Software\Classes\spassfile.saple"
+      <RegistryKey Root="HKLM" Key="Software\Classes\spassfile.saple"
                   ForceCreateOnInstall="yes" ForceDeleteOnUninstall="yes">
         <RegistryValue Type="string" Value="Spass Package" />
       </RegistryKey>
-      <RegistryKey Root="HKCU" Key="Software\Classes\spassfile.saple\shell\open\command"
+      <RegistryKey Root="HKLM" Key="Software\Classes\spassfile.saple\shell\open\command"
                   ForceCreateOnInstall="yes" ForceDeleteOnUninstall="yes">
         <RegistryValue Type="string"
                       Value="&quot;[INSTALLFOLDER]spass.exe&quot; runner &quot;%1&quot;" />

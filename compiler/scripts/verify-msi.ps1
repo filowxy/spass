@@ -1,13 +1,19 @@
 # Verifies MSI install, run, and uninstall leave the machine unchanged.
+# The MSI is per-machine, so this script needs elevation.
 $ErrorActionPreference = 'Stop'
+
+$principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    throw 'verify-msi.ps1 must run as Administrator (per-machine MSI).'
+}
 
 $Msi = 'D:\spass\dist\spass-0.1.0-x64.msi'
 $ProductCode = '{6B2D8F41-3C57-4A92-B0E6-71D4C8E5F309}'
-$InstallDir = Join-Path $env:LOCALAPPDATA 'Programs\Spass'
+$InstallDir = Join-Path $env:ProgramFiles 'Spass'
 $Probe = 'D:\spass\examples\await'
 
-function UserPath {
-    $k = Get-ItemProperty 'HKCU:\Environment' -ErrorAction SilentlyContinue
+function MachinePath {
+    $k = Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -ErrorAction SilentlyContinue
     if ($k -and $k.Path) { return [string]$k.Path }
     return ''
 }
@@ -24,12 +30,11 @@ function Normalise-Path {
     return ($parts -join ';')
 }
 
-# The `.saple` file association. The keys live under the user's own
-# registry, so the install needs no elevation and the uninstall has to
-# take them away again.
-$ExtKey = 'HKCU:\Software\Classes\.saple'
-$ClassKey = 'HKCU:\Software\Classes\spassfile.saple'
-$CommandKey = 'HKCU:\Software\Classes\spassfile.saple\shell\open\command'
+# The `.saple` file association. The keys live in the machine registry,
+# matching the per-machine install; the uninstall must take them away.
+$ExtKey = 'HKLM:\Software\Classes\.saple'
+$ClassKey = 'HKLM:\Software\Classes\spassfile.saple'
+$CommandKey = 'HKLM:\Software\Classes\spassfile.saple\shell\open\command'
 
 function AssocState {
     $ext = $null; $cmd = $null
@@ -41,8 +46,8 @@ function AssocState {
 $assocBefore = AssocState
 Write-Host "association before: ext=$($assocBefore.Ext) command=$($assocBefore.Command)"
 
-$pathBefore = UserPath
-Write-Host "user PATH before: $($pathBefore.Length) chars"
+$pathBefore = MachinePath
+Write-Host "machine PATH before: $($pathBefore.Length) chars"
 
 # The daemon is a machine-wide singleton: a runner that another test
 # left up changes what `daemon --status` says, and the build below
@@ -140,7 +145,7 @@ Write-Host ("    command : {0}" -f $assocFinal.Command)
 if (Test-Path $CommandKey) { throw "the open command key is still there: $CommandKey" }
 if ($assocFinal.Command) { throw "the open command survived the uninstall: $($assocFinal.Command)" }
 Write-Host '    ok   the file association is gone' -ForegroundColor Green
-$pathAfter = UserPath
+$pathAfter = MachinePath
 if ((Normalise-Path $pathAfter) -ne (Normalise-Path $pathBefore)) {
     Write-Host '    FAIL the user PATH changed' -ForegroundColor Red
     Write-Host "      before: $pathBefore"
