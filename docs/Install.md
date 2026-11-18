@@ -1,5 +1,8 @@
 # Install
 
+Download both installers from the
+[latest release](https://github.com/filowxy/spass/releases/latest).
+
 Spass ships in two shapes:
 
 - **`spass-setup.exe`** — a single self-contained installer with a window.
