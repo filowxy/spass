@@ -1,0 +1,43 @@
+# await example — minimal Spass module.
+#
+# This example exercises the @await mechanism.
+# A function with `@await` blocks at the next statement until
+# `spasio:input[mode]("channel")` returns a value from the named
+# data channel. The MVP uses the file mode: it reads a single
+# `f64` from `<data_dir>/input/<channel>.spb` and binds it to the
+# let name that follows the `@await`.
+#
+# Two functions:
+#
+#   * `read_height` — uses `@await` to wait for the value
+#                     of "height" on the file channel, then
+#                     returns it. The MVP runs synchronously:
+#                     the file is read at the `let` statement.
+#   * `driver`      — calls `read_height` and prints the result.
+#                     The wrapper for `read_height` is a regular
+#                     extern "C" function with no state-machine
+#                     wrapping (the Await slot is reserved but
+#                     unused in the synchronous MVP path).
+#
+# Build with:
+#   spass run driver
+# (set SPASS_DATA_DIR or place data/input/height.spb under the
+# project root first; see data/input/height.spb in this example).
+#
+# The runtime writes a `f64::from_le_bytes` from
+# `data/input/height.spb`; a small setup tool
+# can write a 8-byte little-endian double into that file.
+# For local testing the example ships a pre-baked `height.spb`
+# containing the value `1.5`.
+
+# read_height — await the "height" channel and return it.
+func read_height(): float {
+    @await
+    let h: float = spasio:input[file]("height")
+    return h
+}
+
+# driver — single-call site that exercises the Await slot.
+func driver(): float {
+    return read_height()
+}

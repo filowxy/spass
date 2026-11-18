@@ -1,0 +1,57 @@
+# Spass test example for the `terrain` project.
+#
+# This file lives in `test/` and contains
+# one or more `test` declarations. Each test exercises a function in
+# `src/terrain.spass` and asserts on its output. The `spass test`
+# driver parses this file, walks the test bodies, runs them, and
+# reports pass/fail. For now, the parser + semantic analyser are in
+# place; the driver itself is the next milestone (todo: CLI subcommand).
+
+# Bare form: no parameters, a single range check on the height.
+# At the origin the height is `sin(0) = 0`, so we expect it to be
+# very close to 0. The closed range `[-0.01, 0.01]` allows for tiny
+# floating-point drift.
+test "height at origin should be near zero" {
+    let h: float = height(0.0, 0.0)
+    assert(h in [-0.01, 0.01])
+}
+
+# Parameterised form: `with` block declares the inputs and their
+# default values. The body calls `height` and asserts the result is
+# in the open interval `(-10, 10)` — at moderate coordinates the
+# height is bounded by `r * 0.1 + |sin(r * 0.5)|`, which is well
+# inside the asserted band. (The driver runs the test once with
+# the defaults; the parameterised form is in place for future
+# expansions that run the test against a swept input grid.)
+test "height at small coordinates should be in band" with {
+    x: float = 1.0,
+    z: float = 1.0
+} {
+    let h: float = height(x, z)
+    assert(h in {-10.0, 10.0})
+}
+
+# Approximation form: `assert(approx(...))` accepts a value with
+# a tolerance. This is used for value-domain precision
+# checks where the result may have a few bits of jitter. We use
+# it here to check that `add(0.1, 0.2)` is close to `0.3` —
+# classic floating-point demonstration.
+test "add float sum is approximately 0.3" {
+    let s: float = add(0.1, 0.2)
+    assert(approx(s, 0.3, 0.0001))
+}
+
+# A passing test that exercises a real edge case. At the origin the
+# `slope` function returns 0, so the range `[0, 0]` matches.
+test "slope at origin should be 0" {
+    let s: int = slope(0.0, 0.0)
+    assert(s in [0, 0])
+}
+
+# A test that exercises the half-open interval form (left-closed,
+# right-open, `[a, b}`). At small coordinates `height` returns
+# something well above 0.5, but well below 10.
+test "height at moderate coords in left-closed right-open" {
+    let h: float = height(2.0, 2.0)
+    assert(h in [0.0, 100.0})
+}

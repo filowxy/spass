@@ -1,0 +1,11 @@
+[package]
+name = "spass-parser"
+version.workspace = true
+edition.workspace = true
+description = "Spass language parser and AST"
+license.workspace = true
+
+[dependencies]
+spass-lexer = { path = "../spass-lexer" }
+thiserror = { workspace = true }
+num-rational = { workspace = true }

@@ -1,0 +1,102 @@
+# The Spass playground: a window, a software rasterizer and native file
+# I/O, all inside the compiled program.
+#
+# `s2d:` and `s3d:` share ONE window but not one framebuffer: the 3D
+# scene goes into the base layer and the 2D primitives into an overlay
+# layer that carries an alpha per pixel. `present()` composites the
+# overlay over the base, so the 2D is always on top - no matter in
+# which order the program drew them. `spio:` is native file I/O: the
+# program reads and writes the file system itself, with no runner and
+# no daemon in the path.
+#
+# The app loop is the usual shape: open, draw, present. `s2d:open()`
+# returns false once the window is gone, which ends the loop.
+#
+# Headless runs set SPASS_PLAYGROUND_FRAMES=1 (close after one frame)
+# and SPASS_PLAYGROUND_PPM=<path> (dump that frame as a binary PPM).
+
+# The 2D overlay.
+#
+# The overlay is drawn BEFORE the 3D scene on purpose: the layers are
+# independent, so the scene cannot cover it. The opaque panel over the
+# lower middle of the screen hides the ground grid, and the
+# translucent square in the top right corner lets the background show
+# through it.
+func draw_2d(): bool {
+    # A translucent square: the background shows through it.
+    s2d:rect(250.0, 5.0, 16.0, 16.0, 1.0, 0.0, 0.0, 0.5)
+    # An opaque panel, drawn over the ground grid.
+    s2d:rect(130.0, 150.0, 60.0, 60.0, 0.20, 0.60, 0.95, 1.0)
+    # A filled rectangle and its outline.
+    s2d:rect(20.0, 20.0, 120.0, 80.0, 0.20, 0.60, 0.95, 1.0)
+    s2d:frame(20.0, 20.0, 120.0, 80.0, 1.0, 1.0, 1.0, 1.0)
+    s2d:circle(220.0, 60.0, 36.0, 0.95, 0.45, 0.20, 1.0)
+    # An ellipse: the same primitive as the circle, with two radii.
+    s2d:ellipse(55.0, 185.0, 32.0, 16.0, 0.35, 0.80, 0.45, 1.0)
+    # A triangle. The winding order does not matter.
+    s2d:tri(235.0, 165.0, 300.0, 165.0, 268.0, 215.0, 0.95, 0.75, 0.25, 1.0)
+    # The text metrics size the plate behind the label, so the plate
+    # always fits the text that is drawn on it.
+    let w = s2d:text_width("spass2d", 2.0)
+    let h = s2d:text_height(2.0)
+    s2d:rect(146.0, 2.0, w + 8.0, h + 4.0, 0.10, 0.11, 0.14, 0.85)
+    s2d:text(150.0, 6.0, 2.0, 1.0, 1.0, 1.0, 1.0, "spass2d")
+    return true
+}
+
+# The 3D layer: a camera, a directional light, the depth buffer, a
+# ground grid, one box, a sphere and a cylinder. The 3D scene goes
+# into the base layer.
+#
+# The sphere and the cylinder are built in their own local frame: the
+# transform stack pushes the current transform, the shape is placed in
+# it, and the pop puts the old transform back. That way a shape can be
+# moved and turned without the rest of the scene following it.
+func draw_3d(): bool {
+    s3d:camera(-6.0, 5.0, 8.0, 0.0, 0.0, 0.0, 55.0)
+    s3d:light(-0.4, -0.8, -0.5)
+    s3d:depth(true)
+    s3d:grid(6.0, 1.0, 0.25, 0.28, 0.32)
+    s3d:box(0.0, 1.0, 0.0, 1.5, 1.5, 1.5, 0.85, 0.30, 0.25)
+    # A sphere, turned and moved into place.
+    s3d:push()
+    s3d:translate(0.55, 0.90, 2.40)
+    s3d:rotate(0.0, 25.0, 0.0)
+    s3d:sphere(0.0, 0.0, 0.0, 0.90, 16, 0.30, 0.75, 0.95)
+    s3d:pop()
+    # A cylinder, squashed and turned.
+    s3d:push()
+    s3d:translate(-1.90, 0.90, -1.50)
+    s3d:rotate(0.0, 0.0, -18.0)
+    s3d:scale(1.0, 1.15, 1.0)
+    s3d:cylinder(0.0, 0.0, 0.0, 0.60, 1.60, 16, 0.95, 0.80, 0.30)
+    s3d:pop()
+    return true
+}
+
+# Native file I/O: the program writes its own report.
+func write_report(): bool {
+    spio:write_text("build/playground_report.txt", "spass playground: one frame drawn\n")
+    spio:print("playground report written\n")
+    spio:print("label width: ")
+    spio:print_num(s2d:text_width("spass2d", 2.0))
+    spio:print("\n")
+    return true
+}
+
+# The entry point: `spass run app`.
+#
+# The frame order is: clear, then the 2D overlay, then the 3D scene.
+# The order no longer matters - `present()` composites the overlay
+# over the scene - but the 2D comes first here to make that visible.
+func app(): bool {
+    s2d:window(320.0, 240.0, "spass playground")
+    write_report()
+    while s2d:open() {
+        s2d:clear(0.08, 0.09, 0.12)
+        draw_2d()
+        draw_3d()
+        s2d:present()
+    }
+    return true
+}

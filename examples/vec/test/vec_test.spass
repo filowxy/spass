@@ -1,0 +1,82 @@
+# Spass test example for the `vec` project.
+#
+# These tests exercise the vec/mat codegen path end-to-end. The
+# CLI dispatcher only takes f64 arguments, so each test calls a
+# function that takes the vec components as separate f64 args
+# and constructs the vec inside its body. The tests assert the
+# scalar result on a known vec/mat operation.
+#
+# Each test corresponds to one of the functions in `src/vec.spass`.
+# See that file for the arithmetic each function performs.
+
+# dot(vec3, vec3) — 1*4 + 2*5 + 3*6 = 32.
+test "vec3 dot product" {
+    let r: float = vdot(1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+    assert(r in [31.99, 32.01])
+}
+
+# length(vec2(3, 4)) = 5.
+test "vec2 length" {
+    let r: float = vlen(3.0, 4.0)
+    assert(r in [4.99, 5.01])
+}
+
+# length(vec3(2, 3, 6)) = 7.
+test "vec3 length" {
+    let r: float = vlen3(2.0, 3.0, 6.0)
+    assert(r in [6.99, 7.01])
+}
+
+# normalize(vec2(3, 4)).x = 0.6.
+test "vec2 normalize x component" {
+    let r: float = vnorm_x(3.0, 4.0)
+    assert(r in [0.59, 0.61])
+}
+
+# cross(vec3, vec3).y = 6 (see vec.spass for the full expansion).
+test "vec3 cross y component" {
+    let r: float = vcross_y(1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+    assert(r in [5.99, 6.01])
+}
+
+# vec3 + vec3 component-wise add: y = 2 + 5 = 7.
+test "vec3 vec-vec add y component" {
+    let r: float = vadd_y(1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+    assert(r in [6.99, 7.01])
+}
+
+# vec3 * scalar: x = 1 * 3 = 3.
+test "vec3 scalar mul x component" {
+    let r: float = vscale_x(1.0, 2.0, 3.0, 3.0)
+    assert(r in [2.99, 3.01])
+}
+
+# scalar * vec3: x = 2 * 2 = 4 (commutativity check).
+test "scalar vec3 mul x component" {
+    let r: float = vscale_x_rev(2.0, 3.0, 4.0, 2.0)
+    assert(r in [3.99, 4.01])
+}
+
+# hadamard(vec3, vec3).z = 4 * 7 = 28.
+test "vec3 hadamard z component" {
+    let r: float = vhadamard_z(2.0, 3.0, 4.0, 5.0, 6.0, 7.0)
+    assert(r in [27.99, 28.01])
+}
+
+# vec3 + scalar: x = 1 + 1 = 2 (broadcast on the scalar side).
+test "vec3 scalar add x component" {
+    let r: float = vadd_scalar_x(1.0, 2.0, 3.0)
+    assert(r in [1.99, 2.01])
+}
+
+# vec3 - vec3: x = 5 - 1 = 4.
+test "vec3 vec-vec sub x component" {
+    let r: float = vsub_x(5.0, 7.0, 9.0, 1.0, 2.0, 3.0)
+    assert(r in [3.99, 4.01])
+}
+
+# length(vec4(1, 0, 0, 0)) = 1.
+test "vec4 length" {
+    let r: float = vlen4(1.0, 0.0, 0.0, 0.0)
+    assert(r in [0.99, 1.01])
+}

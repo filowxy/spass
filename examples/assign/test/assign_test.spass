@@ -1,0 +1,9 @@
+test "let rebinding allows value replacement" {
+    let r = replace(3.0)
+    assert(r in [6.99, 7.01])
+}
+
+test "value replacement uses the newest value" {
+    let v = replace(10.0)
+    assert(approx(v, 21.0, 0.0001))
+}

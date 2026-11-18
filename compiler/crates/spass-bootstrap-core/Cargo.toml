@@ -1,0 +1,19 @@
+[package]
+name = "spass-bootstrap-core"
+version.workspace = true
+edition.workspace = true
+description = "The Spass numeric core (bootstrap.spass) compiled into the compiler - implements spass_infer::bootstrap::NumericCore"
+license.workspace = true
+
+[dependencies]
+spass-infer = { path = "../spass-infer" }
+num-rational = { workspace = true }
+
+# Self-hosting: compile the Spass core library to Rust at build
+# time using the compiler's own front end + codegen. Build-only, so the
+# main graph stays acyclic (spass-codegen -> spass-semantic ->
+# spass-infer -> this crate would otherwise be a cycle).
+[build-dependencies]
+spass-parser = { path = "../spass-parser" }
+spass-semantic = { path = "../spass-semantic" }
+spass-codegen = { path = "../spass-codegen" }

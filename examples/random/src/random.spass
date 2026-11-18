@@ -1,0 +1,22 @@
+# Section 4.3: `random(a, b, c)` picks one value; `random(f, g)(args)`
+# picks one function and calls it. Both forms return a value of the
+# candidates' shared type.
+func pick_float(): float {
+    return random(1.0, 2.0, 3.0)
+}
+
+func pick_int(): int {
+    return random(10, 20, 30)
+}
+
+func add_one(x: float): float {
+    return x + 1.0
+}
+
+func add_two(x: float): float {
+    return x + 2.0
+}
+
+func pick_function(x: float): float {
+    return random(add_one, add_two)(x)
+}

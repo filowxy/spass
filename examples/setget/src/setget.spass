@@ -1,0 +1,14 @@
+# Section 13c: set/get through the runner. An external program sets the
+# "scale" channel via the runner; `poll` reads it through the file slot
+# (read = freshest value) and doubles it. `publish` writes a value to
+# the "measurement" channel which the external program can get back.
+func poll(): float {
+    let v = spasio:input[file]("scale")
+    return v * 2.0
+}
+
+func publish(): float {
+    let r: float = 3.5
+    spasio:output[file](r, "measurement")
+    return r
+}

@@ -1,0 +1,33 @@
+# if_present example — test cases.
+#
+# These tests exercise the present variant of the `scale` and
+# `threshold` functions. The MVP test driver calls the *present*
+# variant by default (the present variant is the dispatcher's natural
+# target because Spass calls always supply every argument).
+
+test "scale_present_doubles_input" {
+    let x: float = 3.0
+    let result: float = scale(x)
+    assert(result in [5.99, 6.01])
+}
+
+test "scale_present_zero_returns_zero" {
+    let x: float = 0.0
+    let result: float = scale(x)
+    assert(approx(result, 0.0, 0.001))
+}
+
+test "threshold_present_uses_passed_lo" {
+    let value: float = 0.5
+    let lo: float = 1.0
+    let result: float = threshold(value, lo)
+    # value 0.5 < lo 1.0 -> 0.0
+    assert(approx(result, 0.0, 0.001))
+}
+
+test "threshold_present_above_lo_returns_one" {
+    let value: float = 2.0
+    let lo: float = 1.0
+    let result: float = threshold(value, lo)
+    assert(approx(result, 1.0, 0.001))
+}

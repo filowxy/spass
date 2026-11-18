@@ -1,0 +1,29 @@
+# b.spass — top-level file B.
+#
+# Demonstrates:
+#   * `include "math.spass"` (the same header included by a.spass;
+#     project-wide include guard ensures one expansion).
+#   * `ownclude` closure capturing the enclosing function's `base`
+#     local by value at definition time.
+#
+# Note: `ownclude` is placed BEFORE the `func` keyword,
+# i.e. `ownclude func name(...) [-> ret] { ... }` — the same shape as
+# `fileclude func name(...)` but the visibility is function-local
+# instead of file-local.
+
+include "math.spass"
+
+# Public entry. The body defines an `ownclude` that captures `base`.
+# Codegen hoists the closure into a static helper that takes
+# `base` as a leading parameter.
+func compute_b(x: float): float {
+    let base = x + 5.0
+
+    ownclude func scale(t: float): float {
+        return t * base + 1.0
+    }
+
+    let a = scale(2.0)
+    let b = scale(3.0)
+    return add(a, b)
+}

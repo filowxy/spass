@@ -1,0 +1,28 @@
+# Section 8: the test driver runs each `test` block and reports pass/fail.
+test "sum of squares walks a list" with {
+    expected: float = 30.0
+} {
+    let total: float = sum_squares()
+    assert(approx(total, expected, 0.0001))
+}
+
+test "index and length agree" with {
+    expected: float = 23.0
+} {
+    let r: float = to_float(reach())
+    assert(approx(r, expected, 0.0001))
+}
+
+test "empty list has length zero" with {
+    expected: float = 0.0
+} {
+    let r: float = to_float(empty_length())
+    assert(approx(r, expected, 0.0001))
+}
+
+test "nested list is walked twice" with {
+    expected: float = 10.0
+} {
+    let total: float = nested()
+    assert(approx(total, expected, 0.0001))
+}

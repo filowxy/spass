@@ -1,0 +1,28 @@
+# Section 10.3: sequences + message passing. The producer sends three
+# Ping messages to the consumer's queue; the consumer receives them
+# (blocking on its own queue, filtered by the Ping{...} pattern), sums
+# them, and writes the total out through the file channel. driver(1.0)
+# exists only so `spass run` has an entry point — the sequences start
+# with the program and the dispatcher joins them before exiting.
+struct Ping {
+    value: float
+}
+
+sequence producer {
+    for i in 0..3 {
+        send(consumer, Ping{value: to_float(i) * 10.0})
+    }
+}
+
+sequence consumer {
+    let total: float = 0.0
+    for i in 0..3 {
+        let m = receive Ping{value > -1.0}
+        total = total + m.value
+    }
+    spasio:output[file](total, "result")
+}
+
+func driver(): float {
+    return 1.0
+}

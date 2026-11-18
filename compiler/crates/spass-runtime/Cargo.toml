@@ -1,0 +1,13 @@
+[package]
+name = "spass-runtime"
+version.workspace = true
+edition.workspace = true
+description = "Spass runtime support (math, noise, state blocks)"
+license.workspace = true
+
+[lib]
+# The crate is a library of Rust definitions, not a shared library: the
+# C runtime travels as source (`RUNTIME_C`), inlined into every module
+# the compiler emits. A cdylib of this crate would export no runtime
+# symbol at all, because the runtime never passes through Rust.
+crate-type = ["rlib"]

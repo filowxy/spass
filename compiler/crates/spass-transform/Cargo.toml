@@ -1,0 +1,16 @@
+[package]
+name = "spass-transform"
+version.workspace = true
+edition.workspace = true
+description = "Spass compile-time AST transformations (if_present variants, dispatch expansion)"
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+spass-lexer = { path = "../spass-lexer" }
+spass-parser = { path = "../spass-parser" }
+spass-semantic = { path = "../spass-semantic" }
+num-rational = { workspace = true }
+num-traits = { workspace = true }

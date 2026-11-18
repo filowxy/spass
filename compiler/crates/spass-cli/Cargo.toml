@@ -1,0 +1,27 @@
+[package]
+name = "spass"
+version.workspace = true
+edition.workspace = true
+description = "Spass language compiler CLI"
+license.workspace = true
+
+[[bin]]
+name = "spass"
+path = "src/main.rs"
+
+[dependencies]
+spass-lexer = { path = "../spass-lexer" }
+spass-parser = { path = "../spass-parser" }
+spass-semantic = { path = "../spass-semantic" }
+spass-infer = { path = "../spass-infer" }
+spass-transform = { path = "../spass-transform" }
+spass-optimize = { path = "../spass-optimize" }
+spass-codegen = { path = "../spass-codegen" }
+spass-runner = { path = "../spass-runner" }
+spass-runtime = { path = "../spass-runtime" }
+spass-bootstrap-core = { path = "../spass-bootstrap-core" }
+clap = { workspace = true }
+anyhow = { workspace = true }
+zip = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

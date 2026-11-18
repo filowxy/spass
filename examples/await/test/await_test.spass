@@ -1,0 +1,4 @@
+test "read_height returns channel value" {
+    let result: float = read_height()
+    assert(approx(result, 1.5, 0.0001))
+}

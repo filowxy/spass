@@ -1,0 +1,51 @@
+# Treasure Hunt — game logic core (section 1.6: Spass defines the world,
+# the Java front end only renders and feeds commands).
+#
+# The `game` sequence is the resident world (started by the runner's
+# `start` command in FOREVER mode). Every turn it blocks on the "tick"
+# socket slot until the Java front end advances the turn, reads the
+# player's action, applies the rules — movement, world-bounds clamping,
+# step counting, distance hint, win detection — and publishes the state
+# on file channels for the front end to read back.
+#
+# Command encoding on the "cmd_action" channel: 0=up 1=down 2=left 3=right.
+
+sequence game {
+    let hx: float = 0.0
+    let hy: float = 0.0
+    let tx: float = 7.0
+    let ty: float = 3.0
+    let steps: float = 0.0
+    let found: float = 0.0
+    while found == 0.0 {
+        let tick = spasio:input[socket]("tick")
+        let a = spasio:input[file]("cmd_action")
+        if a == 0.0 {
+            hy = hy - 1.0
+        }
+        if a == 1.0 {
+            hy = hy + 1.0
+        }
+        if a == 2.0 {
+            hx = hx - 1.0
+        }
+        if a == 3.0 {
+            hx = hx + 1.0
+        }
+        hx = clamp(hx, 0.0, 9.0)
+        hy = clamp(hy, 0.0, 9.0)
+        steps = steps + 1.0
+        if hx == tx {
+            if hy == ty {
+                found = 1.0
+            }
+        }
+        let d = sqrt((hx - tx) * (hx - tx) + (hy - ty) * (hy - ty))
+        spasio:output[file](hx, "hx")
+        spasio:output[file](hy, "hy")
+        spasio:output[file](steps, "steps")
+        spasio:output[file](found, "found")
+        spasio:output[file](d, "dist")
+    }
+    spasio:output[file](found, "found")
+}

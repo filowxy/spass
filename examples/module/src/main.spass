@@ -1,0 +1,12 @@
+# main.spass — top-level entry.
+#
+# This file does NOT define a `func`; it just `include`s the public
+# entry points from `a.spass` and `b.spass`. The compile-time include
+# expansion merges their contents into this top-level file.
+#
+# Run with:
+#   spass run compute_a 4.0       -> 4.0   (h=2.0; add(2,2)=4.0)
+#   spass run compute_b 10.0      -> 77.0  (base=15.0; scale(2)=31; scale(3)=46; add=77.0)
+
+include "a.spass"
+include "b.spass"

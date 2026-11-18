@@ -1,0 +1,19 @@
+# a.spass — top-level file A.
+#
+# Demonstrates:
+#   * `include "math.spass"` (text expansion with auto guard).
+#   * `fileclude func half(x)` (file-private helper).
+
+include "math.spass"
+
+# fileclude: only callable from this file. `compute_b` in `b.spass`
+# cannot see this symbol; trying would raise E006.
+fileclude func half(x: float): float {
+    return x * 0.5
+}
+
+# Public entry. Internally calls the file-private `half`.
+func compute_a(x: float): float {
+    let h = half(x)
+    return add(h, h)
+}

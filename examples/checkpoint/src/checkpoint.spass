@@ -1,0 +1,120 @@
+# checkpoint example — exercises the @checkpoint / @resume mechanism
+# including the cross-function heterogeneous case
+# (D5 — `Box<dyn SpassState>` shared task registry).
+#
+# This example defines four checkpointed / resume-driven functions and
+# two regular callers:
+#
+#   * `erode`     — a function that runs an iterative erosion loop,
+#                   yielding control at `@checkpoint loop_top` and
+#                   resuming via `@resume loop_top`.
+#                   State struct shape: (h, n, mut_h, i, __sp_return)
+#                   = 4 value slots + 1 return.
+#
+#   * `fill`      — a function with a DIFFERENT state struct shape
+#                   (3 params + 1 let, vs. erode's 2 params + 2 lets).
+#                   The cross-function @resume path is forced to
+#                   dispatch into a totally different concrete type
+#                   via the `SpassState` trait object.
+#                   State struct shape: (radius, depth, count, total, __sp_return)
+#                   = 4 value slots + 1 return.
+#
+#   * `kick`      — a regular (non-checkpointed) function that
+#                   cross-function @resumes `erode`'s `loop_top` from
+#                   a different function frame.
+#   * `drive_fill`— a regular function that cross-function @resumes
+#                   `fill`'s `fill_step` (different target function
+#                   from `kick`'s target).
+#
+#   * `driver`    — a function that calls `erode` via the public
+#                   wrapper (the wrapper handles the state-machine
+#                   setup, so `driver` sees a regular ABI).
+#   * `drive_fill_direct` — same idea, for the heterogeneous `fill`.
+#
+# Build with:
+#   spass run driver 5.0 5.0
+# and expect the result 0 (the erosion fully consumed the height
+# in the MVP, which runs only the first slice synchronously).
+#
+# `spass run kick 5.0 5.0` exercises the cross-function @resume
+# path. The MVP returns 0 for the same reason.
+#
+# `spass run drive_fill 1.0 0.5 3.0` exercises the heterogeneous
+# cross-function @resume (target: `fill`'s `fill_step`, dispatched
+# through `Box<dyn SpassState>`). The MVP returns 0 for the same
+# reason — only the entry slice runs synchronously.
+#
+# `spass run drive_fill_direct 1.0 0.5 3.0` calls `fill` directly
+# without any cross-function resume. Same MVP return of 0.
+
+# erode — runs an iterative loop, yielding at each step. The body
+# loops `n` times; each iteration is one `@checkpoint` site. The
+# function returns the final height.
+func erode(h: float, n: float): float {
+    let mut_h: float = h
+    let i: float = 0.0
+    @checkpoint loop_top
+    if i < n {
+        mut_h = mut_h - 0.1
+    }
+    @resume loop_top
+    return mut_h
+}
+
+# fill — heterogeneous state machine. The state struct has a
+# different shape from `erode`'s (3 params + 1 let, vs. 2 + 2), so
+# the per-function state struct type is distinct. The cross-function
+# @resume from `drive_fill` lands here through the `SpassState`
+# trait object; the Rust emitter compiles both state structs and
+# the shared `SPASS_TASK_REGISTRY` holds them as `Box<dyn SpassState>`.
+#
+# This function is the central test of the D5 heterogeneous case:
+# the registry can store `fill`'s state struct and dispatch into
+# its runner even though its concrete type is different from
+# `erode`'s.
+func fill(radius: float, depth: float, count: float): float {
+    let total: float = 0.0
+    @checkpoint fill_step
+    if total < count {
+        total = total + depth
+    }
+    @resume fill_step
+    return total
+}
+
+# kick — cross-function @resume. Calls `erode` to set up the
+# checkpoint task, then @resumes the same checkpoint from a
+# different function. The MVP runs the target's runner inline;
+# after the resume, control returns to `kick`.
+func kick(h: float, n: float): float {
+    let setup: float = erode(h, n)
+    @resume loop_top
+    return setup
+}
+
+# drive_fill — heterogeneous cross-function @resume. Calls `fill`
+# to set up its checkpoint, then @resumes `fill`'s `fill_step`
+# checkpoint from this (non-checkpointed) function frame. The
+# resume dispatch goes through `SPASS_TASK_REGISTRY` which holds
+# `Box<dyn SpassState>`; the concrete state struct here is
+# different from `erode`'s, exercising the trait dispatch.
+func drive_fill(r: float, d: float, c: float): float {
+    let setup: float = fill(r, d, c)
+    @resume fill_step
+    return setup
+}
+
+# driver — calls erode via the public wrapper (no cross-function
+# resume). A plain function call from the user's perspective.
+func driver(start: float, steps: float): float {
+    let h: float = erode(start, steps)
+    return h
+}
+
+# drive_fill_direct — calls fill via the public wrapper (no
+# cross-function resume). Exercises the heterogeneous function
+# directly.
+func drive_fill_direct(r: float, d: float, c: float): float {
+    let v: float = fill(r, d, c)
+    return v
+}

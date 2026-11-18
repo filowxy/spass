@@ -1,0 +1,32 @@
+# Spass test example for the `struct` project.
+#
+# These tests exercise the struct field-access codegen path. The
+# test driver compiles them together with `src/struct.spass` and
+# reports pass/fail per test.
+
+# `height_of` returns the `height` field of a Point. The result
+# should be 3.0 because we construct the point with height 3.
+test "height_of returns field" {
+    let p: Point = make_point(1.0, 2.0, 3.0)
+    let h: float = height_of(p)
+    assert(h in [2.99, 3.01])
+}
+
+# `translate` shifts the (x, y) of a Point. The height should be
+# preserved (3.0). The (x, y) coords should be (1+4, 2+5) = (5, 7).
+# We can't directly assert on the struct, but we can check the
+# preserved height as a proxy.
+test "translate preserves height" {
+    let p: Point = make_point(1.0, 2.0, 3.0)
+    let q: Point = translate(p, 4.0, 5.0)
+    let h: float = height_of(q)
+    assert(h in [2.99, 3.01])
+}
+
+# `sum_heights` adds two points' heights. 3.0 + 6.0 = 9.0.
+test "sum_heights adds two heights" {
+    let a: Point = make_point(0.0, 0.0, 3.0)
+    let b: Point = make_point(0.0, 0.0, 6.0)
+    let s: float = sum_heights(a, b)
+    assert(s in [8.99, 9.01])
+}
