@@ -1,6 +1,12 @@
 //! Registers and removes the `.saple` file association.
+//!
+//! The hive follows the install scope: a per-user install writes to HKCU and
+//! needs no elevation, while a per-machine install writes the same keys to
+//! HKLM from an elevated process.
 
 use std::path::Path;
+
+use crate::Scope;
 
 /// The registry key that names the package class.
 const CLASS_KEY: &str = r"Software\Classes\spassfile.saple";
@@ -18,21 +24,32 @@ fn open_command(exe: &Path) -> String {
     format!("\"{}\" runner \"%1\"", exe.display())
 }
 
+fn hive(scope: Scope) -> u32 {
+    match scope {
+        Scope::User => crate::HKEY_CURRENT_USER,
+        Scope::Machine => crate::HKEY_LOCAL_MACHINE,
+    }
+}
+
 /// Register the association. Returns whether every key was written.
-pub fn register(exe: &Path) -> bool {
-    write_default(EXT_KEY, CLASS_NAME)
-        && write_default(CLASS_KEY, CLASS_LABEL)
-        && write_default(&format!(r"{}\shell\open\command", CLASS_KEY), &open_command(exe))
+pub fn register(exe: &Path, scope: Scope) -> bool {
+    write_default(EXT_KEY, CLASS_NAME, scope)
+        && write_default(CLASS_KEY, CLASS_LABEL, scope)
+        && write_default(
+            &format!(r"{}\shell\open\command", CLASS_KEY),
+            &open_command(exe),
+            scope,
+        )
 }
 
 /// Remove the association. Returns whether every key was removed.
 ///
 /// The extension key is only ours if it still points at our class; a
 /// user who re-pointed `.saple` at something else keeps that choice.
-pub fn unregister() -> bool {
+pub fn unregister(scope: Scope) -> bool {
     let mut ok = true;
-    if read_default(EXT_KEY).as_deref() == Some(CLASS_NAME) {
-        ok &= delete_key(EXT_KEY);
+    if read_default(EXT_KEY, scope).as_deref() == Some(CLASS_NAME) {
+        ok &= delete_key(EXT_KEY, scope);
     }
     for key in [
         r"Software\Classes\spassfile.saple\shell\open\command",
@@ -40,14 +57,14 @@ pub fn unregister() -> bool {
         r"Software\Classes\spassfile.saple\shell",
         CLASS_KEY,
     ] {
-        ok &= delete_key(key);
+        ok &= delete_key(key, scope);
     }
     ok
 }
 
 /// Write a key's default value, creating the key and its parents.
 #[cfg(windows)]
-fn write_default(sub_key: &str, value: &str) -> bool {
+fn write_default(sub_key: &str, value: &str, scope: Scope) -> bool {
     let Some((create, set, close, _)) = crate::reg::assoc_symbols() else {
         return false;
     };
@@ -56,7 +73,7 @@ fn write_default(sub_key: &str, value: &str) -> bool {
     let mut disposition: u32 = 0;
     let rc = unsafe {
         create(
-            crate::HKEY_CURRENT_USER as isize,
+            hive(scope) as isize,
             sub.as_ptr(),
             0,
             std::ptr::null(),
@@ -79,18 +96,18 @@ fn write_default(sub_key: &str, value: &str) -> bool {
 }
 
 #[cfg(not(windows))]
-fn write_default(_sub_key: &str, _value: &str) -> bool {
+fn write_default(_sub_key: &str, _value: &str, _scope: Scope) -> bool {
     false
 }
 
 /// Read a key's default value.
 #[cfg(windows)]
-fn read_default(sub_key: &str) -> Option<String> {
+fn read_default(sub_key: &str, scope: Scope) -> Option<String> {
     use std::mem::size_of;
     let (open, get, _set, close) = crate::reg::symbols()?;
     let sub: Vec<u16> = format!("{}\0", sub_key).encode_utf16().collect();
     let mut h: isize = 0;
-    if unsafe { open(crate::HKEY_CURRENT_USER, sub.as_ptr(), 0, crate::KEY_QUERY_VALUE, &mut h) } != 0 {
+    if unsafe { open(hive(scope), sub.as_ptr(), 0, crate::KEY_QUERY_VALUE, &mut h) } != 0 {
         return None;
     }
     let name: Vec<u16> = "\0".encode_utf16().collect();
@@ -121,21 +138,21 @@ fn read_default(sub_key: &str) -> Option<String> {
 }
 
 #[cfg(not(windows))]
-fn read_default(_sub_key: &str) -> Option<String> {
+fn read_default(_sub_key: &str, _scope: Scope) -> Option<String> {
     None
 }
 
 /// Remove a key. A key with subkeys is left alone.
 #[cfg(windows)]
-fn delete_key(sub_key: &str) -> bool {
+fn delete_key(sub_key: &str, scope: Scope) -> bool {
     let Some((_create, _set, _close, delete)) = crate::reg::assoc_symbols() else {
         return false;
     };
     let sub: Vec<u16> = format!("{}\0", sub_key).encode_utf16().collect();
-    (unsafe { delete(crate::HKEY_CURRENT_USER as isize, sub.as_ptr()) }) == 0
+    (unsafe { delete(hive(scope) as isize, sub.as_ptr()) }) == 0
 }
 
 #[cfg(not(windows))]
-fn delete_key(_sub_key: &str) -> bool {
+fn delete_key(_sub_key: &str, _scope: Scope) -> bool {
     false
 }

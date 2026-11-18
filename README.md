@@ -18,8 +18,8 @@ call through a runner, or load in-process as a shared library.
 
 Download from the [latest release](https://github.com/filowxy/spass/releases/latest):
 
-- `spass-setup.exe` — self-contained installer, no admin rights.
-- `spass-0.1.0-x64.msi` — per-user Windows Installer package, scriptable with `msiexec`.
+- `spass-setup.exe` — self-contained installer; choose just-me or all-users in the window.
+- `spass-0.1.0-x64.msi` — per-machine Windows Installer package, scriptable with `msiexec`.
 
 ## Documentation
 

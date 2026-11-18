@@ -8,7 +8,8 @@ Spass ships in two shapes:
 - **`spass-setup.exe`** — a single self-contained installer with a window.
   It embeds the compiler and the self-hosted bootstrap source, so you can
   copy that one file anywhere and run it. No installer framework, no
-  PowerShell, no admin rights.
+  PowerShell. Choose **Just me** (no admin rights) or **All users** (prompts
+  for elevation) in the window.
 - **`spass-<version>-x64.msi`** — a Windows Installer package for the same
   payload. It installs for all users under Program Files, requires
   elevation, and is scriptable with `msiexec`.
@@ -17,8 +18,16 @@ Spass ships in two shapes:
 
 ### With `spass-setup.exe`
 
-**Double-click `spass-setup.exe`.** A window opens where you choose the
-install location, tick the options you want, and press **Install**.
+**Double-click `spass-setup.exe`.** A window opens where you first choose
+**Just me** or **All users**, then review the install location, tick the
+options you want, and press **Install**.
+
+- **Just me** (default) installs to `%LOCALAPPDATA%\Programs\Spass`, adds that
+  folder to your user `PATH`, and needs no administrator rights.
+- **All users** installs to `%ProgramFiles%\Spass`, adds that folder to the
+  system `PATH`, and registers the `.saple` association machine-wide. Windows
+  asks for administrator rights; the installer then continues in an elevated
+  window with your choices already filled in.
 
 ```
 spass-setup.exe
@@ -59,7 +68,8 @@ interface.
 
 | Control | What it does |
 |---|---|
-| **Install location** | Where Spass is written. Edit it directly; **Reset to default** restores `%LOCALAPPDATA%\Programs\Spass`. |
+| **Just me / All users** | Who the install is for. Switching moves the default location between `%LOCALAPPDATA%\Programs\Spass` and `%ProgramFiles%\Spass`, and between the user and system `PATH`. |
+| **Install location** | Where Spass is written. Edit it directly; **Reset to default** restores the default for the chosen scope. |
 | **Add the install location to my PATH** | On by default, so `spass` works from any terminal. |
 | **Also install the Rust toolchain** | On by default. `spass test` and `spass run` compile your Spass with `rustc`, so they need Rust. `spass build` does not. |
 | **Progress** | Fills during the Rust download. |
@@ -79,6 +89,7 @@ CLI" — the window only opens on a bare double-click or with `--gui`.
 |---|---|
 | *(none, double-clicked)* | Open the window |
 | `--gui` | Force the window even from a terminal |
+| `--scope user\|machine` | Install for just you (default) or all users; `machine` elevates automatically |
 | `--install-dir <DIR>` | Install elsewhere, e.g. `C:\Tools\Spass` |
 | `--no-path` | Install without touching `PATH` |
 | `--uninstall` | Remove the install and its `PATH` entry |
@@ -163,8 +174,8 @@ deliberate:
 
 - The install is **per machine** (`Scope="perMachine"`, under
   `%ProgramFiles%\Spass`), so it writes the machine `PATH` and HKLM and
-  needs elevation. `spass-setup.exe` remains the per-user, no-elevation
-  installer.
+  needs elevation. `spass-setup.exe` can do the same via its **All users**
+  option, but defaults to a per-user install that needs no elevation.
 - The package carries **no interface of its own**. `msiexec` shows its own
   progress bar. A hand-written UI sequence would need the `InstallExecute`
   action to block on the install script, and that action is not in WiX v5's

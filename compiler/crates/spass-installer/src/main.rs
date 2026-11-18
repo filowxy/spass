@@ -7,6 +7,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 mod assoc;
+mod elevate;
 mod gui;
 mod rustup;
 mod sha256;
@@ -17,6 +18,44 @@ include!(concat!(env!("OUT_DIR"), "/payload.rs"));
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Who an installation applies to. This is the one decision that changes
+/// both the target directory and which registry hive PATH / file-association
+/// entries are written to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Scope {
+    /// Current user: `%LOCALAPPDATA%\Programs\Spass`, HKCU. No elevation.
+    User,
+    /// All users: `%ProgramFiles%\Spass`, HKLM. Needs elevation.
+    Machine,
+}
+
+impl Scope {
+    pub(crate) fn default_dir(self) -> PathBuf {
+        match self {
+            Scope::User => {
+                let base = env::var_os("LOCALAPPDATA")
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("."));
+                base.join("Programs").join("Spass")
+            }
+            Scope::Machine => {
+                let base = env::var_os("ProgramFiles")
+                    .or_else(|| env::var_os("ProgramFiles(x86)"))
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
+                base.join("Spass")
+            }
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Scope::User => "user",
+            Scope::Machine => "machine",
+        }
+    }
+}
+
 struct Opts {
     install_dir: PathBuf,
     add_to_path: bool,
@@ -24,13 +63,15 @@ struct Opts {
     force: bool,
     silent: bool,
     install_rust: bool,
+    scope: Scope,
+    /// Set on the elevated relaunch so it skips asking for elevation again.
+    elevated: bool,
+    /// Set on the elevated GUI relaunch so it starts installing immediately.
+    autostart: bool,
 }
 
 fn default_install_dir() -> PathBuf {
-    let base = env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    base.join("Programs").join("Spass")
+    Scope::User.default_dir()
 }
 
 fn parse_args() -> Result<Opts, String> {
@@ -41,6 +82,9 @@ fn parse_args() -> Result<Opts, String> {
         force: false,
         silent: false,
         install_rust: false,
+        scope: Scope::User,
+        elevated: false,
+        autostart: false,
     };
     let args: Vec<String> = env::args().skip(1).collect();
     let mut i = 0;
@@ -59,6 +103,15 @@ fn parse_args() -> Result<Opts, String> {
             "--force" | "-y" => o.force = true,
             "--silent" => o.silent = true,
             "--install-rust" => o.install_rust = true,
+            "--scope" => {
+                i += 1;
+                let v = args.get(i).ok_or("--scope needs a value (user|machine)")?;
+                o.scope = parse_scope(v)?;
+            }
+            // Internal flags used by the elevated relaunch / GUI launch.
+            "--elevated" => o.elevated = true,
+            "--gui" | "/gui" => {}
+            "--autostart" => o.autostart = true,
             "--install-dir" => {
                 i += 1;
                 let v = args.get(i).ok_or("--install-dir needs a value")?;
@@ -67,6 +120,8 @@ fn parse_args() -> Result<Opts, String> {
             other => {
                 if let Some(v) = other.strip_prefix("--install-dir=") {
                     o.install_dir = PathBuf::from(v);
+                } else if let Some(v) = other.strip_prefix("--scope=") {
+                    o.scope = parse_scope(v)?;
                 } else {
                     return Err(format!("unknown option `{}`", other));
                 }
@@ -74,7 +129,56 @@ fn parse_args() -> Result<Opts, String> {
         }
         i += 1;
     }
+    // When no explicit directory was given, the default follows the scope.
+    // Track this by comparing against the *user* default: any other choice
+    // (including the machine default typed by hand) counts as explicit.
+    if o.scope == Scope::Machine && o.install_dir == default_install_dir() {
+        o.install_dir = Scope::Machine.default_dir();
+    }
     Ok(o)
+}
+
+/// Join command-line arguments so `CommandLineToArgvW` reproduces them
+/// exactly: quote any token containing whitespace or a quote, escaping
+/// embedded quotes and trailing backslashes the way the Windows CRT does.
+fn shell_join(args: &[String]) -> String {
+    fn quote(s: &str) -> String {
+        if !s.is_empty() && !s.chars().any(|c| c.is_whitespace() || c == '"') {
+            return s.to_string();
+        }
+        let mut out = String::from("\"");
+        let mut slashes = 0usize;
+        for c in s.chars() {
+            if c == '\\' {
+                slashes += 1;
+                continue;
+            }
+            if c == '"' {
+                out.push_str(&"\\".repeat(slashes * 2 + 1));
+                out.push('"');
+            } else {
+                out.push_str(&"\\".repeat(slashes));
+                out.push(c);
+            }
+            slashes = 0;
+        }
+        // Escape trailing backslashes so they do not escape the closing quote.
+        out.push_str(&"\\".repeat(slashes * 2));
+        out.push('"');
+        out
+    }
+    args.iter().map(|s| quote(s)).collect::<Vec<_>>().join(" ")
+}
+
+fn parse_scope(v: &str) -> Result<Scope, String> {
+    match v.trim().to_ascii_lowercase().as_str() {
+        "user" | "me" | "current" | "per-user" => Ok(Scope::User),
+        "machine" | "all" | "all-users" | "system" | "per-machine" => Ok(Scope::Machine),
+        other => Err(format!(
+            "unknown scope `{}` - expected `user` or `machine`",
+            other
+        )),
+    }
 }
 
 fn print_help() {
@@ -83,7 +187,9 @@ fn print_help() {
          Install or uninstall the Spass language toolchain.\n\n\
          USAGE:\n    spass-setup [OPTIONS]\n\n\
          OPTIONS:\n\
-         \x20   --install-dir <DIR>  Install location (default: %LOCALAPPDATA%\\Programs\\Spass)\n\
+         \x20   --scope <SCOPE>       Who to install for: `user` (default, no admin)\n\
+         \x20                       or `machine` (all users, prompts for admin)\n\
+         \x20   --install-dir <DIR>  Install location (follows --scope by default)\n\
          \x20   --no-path            Do not modify PATH\n\
          \x20   --install-rust       Also download the official Rust installer (rustup),\n\
          \x20                       which `spass test` and `spass run` need\n\
@@ -94,9 +200,10 @@ fn print_help() {
          \x20   --help, -h           Show this help\n\
          \x20   --version, -V        Show the version\n\n\
          EXAMPLES:\n\
-         \x20   spass-setup                  install Spass\n\
-         \x20   spass-setup --install-rust   install Spass and fetch Rust too\n\
-         \x20   spass-setup --uninstall      remove Spass\n",
+         \x20   spass-setup                          install for the current user\n\
+         \x20   spass-setup --scope machine          install for all users (elevates)\n\
+         \x20   spass-setup --install-rust           install Spass and fetch Rust too\n\
+         \x20   spass-setup --uninstall              remove Spass\n",
         VERSION
     );
 }
@@ -118,18 +225,21 @@ fn main() {
     // detected via the parent process. An explicit flag on the command line
     // always means "run the CLI".
     let args: Vec<String> = env::args().skip(1).collect();
-    let force_gui = args.iter().any(|a| a == "--gui" || a == "/gui");
+    // `--autostart` is the elevated GUI relaunch: it must open the window so
+    // the worker can report progress there instead of in a stray console.
+    let force_gui = args
+        .iter()
+        .any(|a| a == "--gui" || a == "/gui" || a == "--autostart");
     let other_args: Vec<String> = args
         .iter()
-        .filter(|a| a.as_str() != "--gui" && a.as_str() != "/gui")
+        .filter(|a| {
+            a.as_str() != "--gui"
+                && a.as_str() != "/gui"
+                && a.as_str() != "--autostart"
+                && a.as_str() != "--elevated"
+        })
         .cloned()
         .collect();
-
-    if force_gui || (other_args.is_empty() && launched_by_explorer()) {
-        let reporter = Arc::new(gui::GuiReporter::new());
-        ui::set(reporter.clone());
-        std::process::exit(gui::run(&default_install_dir(), reporter));
-    }
 
     let opts = match parse_args() {
         Ok(o) => o,
@@ -138,6 +248,26 @@ fn main() {
             std::process::exit(2);
         }
     };
+
+    if force_gui || (other_args.is_empty() && launched_by_explorer()) {
+        let reporter = Arc::new(gui::GuiReporter::new());
+        ui::set(reporter.clone());
+        std::process::exit(gui::run(&opts, reporter));
+    }
+
+    // A machine-wide install writes to HKLM and Program Files. When we are
+    // not elevated yet, restart ourselves once with "runas" so the real
+    // install runs in an elevated process. `--elevated` breaks the loop.
+    if opts.scope == Scope::Machine && !opts.elevated && !elevate::is_admin() {
+        let mut relaunch: Vec<String> = vec!["--elevated".into()];
+        relaunch.extend(other_args.iter().cloned());
+        if elevate::relaunch_elevated(&shell_join(&relaunch)) {
+            plain("Requesting administrator rights - continuing in the elevated window.");
+            std::process::exit(0);
+        }
+        error("Could not obtain administrator rights. Run spass-setup.exe as administrator.");
+        std::process::exit(1);
+    }
 
     // The Rust step runs first when requested: `spass test` and `spass run`
     // need `rustc`, so it helps to settle that before laying down the
@@ -344,7 +474,7 @@ fn run_uninstall(o: &Opts) -> i32 {
     // the delete succeeds instead of failing with a sharing violation.
     kill_daemons();
     // The file association points at the binary that is about to go.
-    if assoc::unregister() {
+    if assoc::unregister(o.scope) {
         ok("removed the .saple file association");
     } else {
         note("could not remove the .saple file association");
@@ -446,7 +576,7 @@ fn run_install(o: &Opts) -> i32 {
 
     // A `.saple` package is opened by the runner, so Explorer has to know
     // what to do with one.
-    if assoc::register(&dest) {
+    if assoc::register(&dest, o.scope) {
         ok("registered the .saple file association");
     } else {
         note("could not register the .saple file association");
@@ -567,6 +697,7 @@ mod reg {
 }
 
 pub(crate) const HKEY_CURRENT_USER: u32 = 0x8000_0001;
+pub(crate) const HKEY_LOCAL_MACHINE: u32 = 0x8000_0002;
 pub(crate) const KEY_QUERY_VALUE: u32 = 0x0001;
 pub(crate) const KEY_SET_VALUE: u32 = 0x0002;
 /// `KEY_SET_VALUE | KEY_CREATE_SUB_KEY`: what a key that has to be created
@@ -575,23 +706,36 @@ pub(crate) const KEY_WRITE: u32 = 0x0006;
 pub(crate) const REG_EXPAND_SZ: u32 = 2;
 pub(crate) const REG_SZ: u32 = 1;
 
-/// Read the raw, *unexpanded* user PATH. `RegQueryValueExW` hands back the raw
-/// REG_EXPAND_SZ bytes, so any `%VAR%` references survive a
+/// The registry hive and key that hold PATH for a given scope.
+fn path_hive(scope: Scope) -> (u32, &'static str) {
+    match scope {
+        Scope::User => (HKEY_CURRENT_USER, "Environment"),
+        Scope::Machine => (
+            HKEY_LOCAL_MACHINE,
+            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+        ),
+    }
+}
+
+/// Read the raw, *unexpanded* PATH for `scope`. `RegQueryValueExW` hands back
+/// the raw REG_EXPAND_SZ bytes, so any `%VAR%` references survive a
 /// read-modify-write cycle. Reading the `PATH` environment variable instead
 /// would return the merged, already-expanded machine+user value, and
 /// writing that back would permanently freeze those references.
-fn current_user_path() -> Option<String> {
+fn current_path(scope: Scope) -> Option<String> {
     #[cfg(not(windows))]
     {
+        let _ = scope;
         None
     }
     #[cfg(windows)]
     {
         use std::mem::size_of;
         let (open, get, _set, close) = reg::symbols()?;
-        let sub: Vec<u16> = "Environment\0".encode_utf16().collect();
+        let (hive, sub_key) = path_hive(scope);
+        let sub: Vec<u16> = format!("{}\0", sub_key).encode_utf16().collect();
         let mut h: isize = 0;
-        if unsafe { open(HKEY_CURRENT_USER, sub.as_ptr(), 0, KEY_QUERY_VALUE, &mut h) } != 0 {
+        if unsafe { open(hive, sub.as_ptr(), 0, KEY_QUERY_VALUE, &mut h) } != 0 {
             return None;
         }
         let name: Vec<u16> = "Path\0".encode_utf16().collect();
@@ -625,12 +769,12 @@ fn current_user_path() -> Option<String> {
     }
 }
 
-/// Write the user PATH back as REG_EXPAND_SZ so `%VAR%` entries stay
+/// Write PATH for `scope` back as REG_EXPAND_SZ so `%VAR%` entries stay
 /// expandable across future edits.
-fn set_current_user_path(value: &str) -> bool {
+fn set_path(scope: Scope, value: &str) -> bool {
     #[cfg(not(windows))]
     {
-        let _ = value;
+        let _ = (scope, value);
         false
     }
     #[cfg(windows)]
@@ -639,9 +783,10 @@ fn set_current_user_path(value: &str) -> bool {
             Some(s) => s,
             None => return false,
         };
-        let sub: Vec<u16> = "Environment\0".encode_utf16().collect();
+        let (hive, sub_key) = path_hive(scope);
+        let sub: Vec<u16> = format!("{}\0", sub_key).encode_utf16().collect();
         let mut h: isize = 0;
-        if unsafe { open(HKEY_CURRENT_USER, sub.as_ptr(), 0, KEY_SET_VALUE, &mut h) } != 0 {
+        if unsafe { open(hive, sub.as_ptr(), 0, KEY_SET_VALUE, &mut h) } != 0 {
             return false;
         }
         let name: Vec<u16> = "Path\0".encode_utf16().collect();
@@ -685,18 +830,22 @@ fn same_dir(a: &str, b: &Path) -> bool {
 }
 
 fn add_to_path(o: &Opts) {
-    step("Adding to your PATH");
-    let current = current_user_path().unwrap_or_default();
+    let which = match o.scope {
+        Scope::User => "your user PATH",
+        Scope::Machine => "the system PATH",
+    };
+    step(&format!("Adding to {}", which));
+    let current = current_path(o.scope).unwrap_or_default();
     let present: Vec<&str> = current.split(';').filter(|s| !s.trim().is_empty()).collect();
     if present.iter().any(|e| same_dir(e, &o.install_dir)) {
-        ok("already on your PATH");
+        ok("already on PATH");
         return;
     }
     let mut entries: Vec<String> = present.iter().map(|s| s.to_string()).collect();
     entries.push(o.install_dir.display().to_string());
-    if set_current_user_path(&entries.join(";")) {
+    if set_path(o.scope, &entries.join(";")) {
         broadcast_env_change();
-        ok("added to your user PATH");
+        ok(&format!("added to {}", which));
     } else {
         note("could not update PATH automatically (registry write denied)");
         note(&format!("add it manually: {}", o.install_dir.display()));
@@ -704,7 +853,7 @@ fn add_to_path(o: &Opts) {
 }
 
 fn remove_from_path(o: &Opts) {
-    let current = match current_user_path() {
+    let current = match current_path(o.scope) {
         Some(c) => c,
         None => return,
     };
@@ -713,9 +862,52 @@ fn remove_from_path(o: &Opts) {
     if kept.len() == before.len() {
         return;
     }
-    if set_current_user_path(&kept.join(";")) {
+    if set_path(o.scope, &kept.join(";")) {
         broadcast_env_change();
-        ok("removed from your user PATH");
+        ok("removed from PATH");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scope_values_parse() {
+        assert_eq!(parse_scope("user").unwrap(), Scope::User);
+        assert_eq!(parse_scope("ME").unwrap(), Scope::User);
+        assert_eq!(parse_scope("machine").unwrap(), Scope::Machine);
+        assert_eq!(parse_scope("All-Users").unwrap(), Scope::Machine);
+        assert!(parse_scope("bogus").is_err());
+    }
+
+    #[test]
+    fn shell_join_quotes_spaced_args() {
+        let args = vec![
+            "--install-dir".to_string(),
+            r"C:\Program Files\Spass".to_string(),
+            "--scope".to_string(),
+            "machine".to_string(),
+        ];
+        assert_eq!(
+            shell_join(&args),
+            "--install-dir \"C:\\Program Files\\Spass\" --scope machine"
+        );
+    }
+
+    #[test]
+    fn shell_join_escapes_quotes() {
+        let args = vec!["say\"hi\"".to_string()];
+        assert_eq!(shell_join(&args), "\"say\\\"hi\\\"\"");
+    }
+
+    #[test]
+    fn scope_defaults_differ() {
+        let u = Scope::User.default_dir();
+        let m = Scope::Machine.default_dir();
+        assert_ne!(u, m);
+        assert!(u.ends_with("Spass"));
+        assert!(m.ends_with("Spass"));
     }
 }
 
