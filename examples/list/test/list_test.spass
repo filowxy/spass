@@ -1,4 +1,4 @@
-# Section 8: the test driver runs each `test` block and reports pass/fail.
+# The test driver runs each `test` block and reports pass/fail.
 test "sum of squares walks a list" with {
     expected: float = 30.0
 } {

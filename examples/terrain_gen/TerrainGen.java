@@ -3,7 +3,7 @@ import java.net.*;
 import java.util.*;
 
 /**
- * Terrain generator renderer (section 1.6).
+ * Terrain generator renderer.
  *
  * Spass (examples/terrain_gen) generates a 16x16 tile map as a resident
  * world: heights (layered sines), tile classification (water/sand/grass/

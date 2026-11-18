@@ -1,4 +1,4 @@
-# Section 9.2 + 2.5 (runner-owned spasio): socket channels live in the
+# Runner-owned spasio: socket channels live in the
 # runner's memory slots. `echo_height` blocks on the "height" slot until
 # an external program sets it; `send_height` pushes a value that the
 # external program can get back. All traffic goes through the runner —

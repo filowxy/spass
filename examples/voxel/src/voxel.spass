@@ -1,4 +1,4 @@
-# Voxel terrain (3D) — section 1.6: Spass generates the world, Java renders.
+# Voxel terrain (3D) — Spass generates the world, Java renders.
 #
 # An 8x8x8 voxel volume. The `gen3d` sequence walks every column (x, z):
 #   * `surface(x, z)` is the terrain height (layered sines);

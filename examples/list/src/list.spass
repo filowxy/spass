@@ -1,4 +1,4 @@
-# Section 3.2: a list is a value with a runtime length. The element
+# A list is a value with a runtime length. The element
 # type comes from the annotation or from the first element; the length
 # is read with `list.length` and the elements with `list[index]`.
 func sum_squares(): float {

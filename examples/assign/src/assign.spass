@@ -1,4 +1,4 @@
-# Section 3.9: variables are mutable — `let` declares a binding whose
+# Variables are mutable — `let` declares a binding whose
 # value can be replaced. replace(3.0) = 3*2+1 = 7; replace(10.0) = 21.
 func replace(a: float): float {
     let x: float = a

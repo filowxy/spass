@@ -1,4 +1,4 @@
-# Section 4.3: `random(a, b, c)` picks one value; `random(f, g)(args)`
+# `random(a, b, c)` picks one value; `random(f, g)(args)`
 # picks one function and calls it. Both forms return a value of the
 # candidates' shared type.
 func pick_float(): float {

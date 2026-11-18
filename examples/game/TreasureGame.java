@@ -3,7 +3,7 @@ import java.net.*;
 import java.util.*;
 
 /**
- * Treasure Hunt — Java front end (section 1.6).
+ * Treasure Hunt — Java front end.
  *
  * The Spass program (examples/game) is the game's logic core: it owns the
  * hunter position, the treasure, movement rules, world bounds, the distance
@@ -50,7 +50,7 @@ public class TreasureGame {
             try {
                 ensureConn();
                 byte[] body = json.getBytes("UTF-8");
-                out.writeInt(body.length); // big-endian, matches section 9.2
+                out.writeInt(body.length); // big-endian frame header
                 out.write(body);
                 out.flush();
                 int len = in.readInt();

@@ -3,7 +3,7 @@ import java.net.*;
 import java.util.*;
 
 /**
- * Voxel terrain renderer (section 1.6 — 3D).
+ * Voxel terrain renderer (3D).
  *
  * Spass (examples/voxel) generates an 8x8x8 voxel volume as a resident
  * world: terrain surface (layered sines), materials (air/stone/water/
