@@ -1,0 +1,18 @@
+# Section 8: the picked value stays inside the candidate range, and the
+# picked function is one of the declared candidates.
+test "value pick stays inside the candidate set" {
+    let v: float = pick_float()
+    assert(v in [1.0, 3.0])
+}
+
+test "integer pick stays inside the candidate set" {
+    let v: int = pick_int()
+    assert(v in [10, 30])
+}
+
+test "function pick calls one candidate" with {
+    x: float = 1.0
+} {
+    let v: float = pick_function(x)
+    assert(v in [2.0, 3.0])
+}

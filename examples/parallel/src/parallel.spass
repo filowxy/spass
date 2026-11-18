@@ -1,0 +1,32 @@
+# Section 5.4: `parallel f(xs, ys)` calls `f` once per list index and
+# returns a task. Awaiting that task yields the list of results.
+func pair(a: float, b: float): float {
+    return a + b
+}
+
+func square(x: float): float {
+    return x * x
+}
+
+func batch_sum(): float {
+    let xs: list<float> = [1.0, 2.0, 3.0]
+    let ys: list<float> = [10.0, 20.0, 30.0]
+    let t = parallel pair(xs, ys)
+    let sums: list<float> = await(t)
+    let total: float = 0.0
+    for s in sums {
+        total = total + s
+    }
+    return total
+}
+
+func batch_squares(): float {
+    let xs: list<float> = [2.0, 3.0, 4.0]
+    let t = parallel square(xs)
+    let squares: list<float> = await(t)
+    let total: float = 0.0
+    for s in squares {
+        total = total + s
+    }
+    return total
+}

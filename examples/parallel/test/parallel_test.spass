@@ -1,0 +1,14 @@
+# Section 8: the batch result is the per-index list of calls.
+test "parallel with two list arguments" with {
+    expected: float = 66.0
+} {
+    let total: float = batch_sum()
+    assert(approx(total, expected, 0.0001))
+}
+
+test "parallel with one list argument" with {
+    expected: float = 29.0
+} {
+    let total: float = batch_squares()
+    assert(approx(total, expected, 0.0001))
+}

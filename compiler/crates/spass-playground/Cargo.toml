@@ -1,0 +1,10 @@
+[package]
+name = "spass-playground"
+version.workspace = true
+edition.workspace = true
+description = "Spass playground: spass2d / spass3d rendering + native spio file runtime, embedded into compiled Spass programs"
+license.workspace = true
+
+[lib]
+name = "spass_playground"
+path = "src/lib.rs"

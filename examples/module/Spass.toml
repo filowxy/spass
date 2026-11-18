@@ -1,0 +1,24 @@
+# module example — exercises the module system.
+#
+# This example has three files:
+#
+#   src/math.spass  — public `add` function (used by both callers).
+#   src/a.spass     — `fileclude` helper `half`, public `compute_a`.
+#   src/main.spass  — entry point that calls `compute_a` and `compute_b`.
+#
+# The `include` mechanism shares `math.spass` between the two top-level
+# files; without the project-wide include guard, the second copy would
+# raise E012 ("function `add` already defined").
+#
+# `fileclude func half(x)` lives in `a.spass`; `compute_b` in `b.spass`
+# must NOT be able to call `half` — that would be an E006 file-private
+# cross-file access error. We test the positive case (a.spass calls
+# half fine) and rely on the semantic pass to reject the negative one.
+#
+# `compute_b` in `b.spass` uses an `ownclude` closure that captures
+# `base` by value. The codegen layer hoists the closure into a static
+# helper that takes the captured `base` as a leading parameter.
+#
+# Build with:
+#   spass run compute_a 4.0       -> 2.0
+#   spass run compute_b 10.0      -> 25.0

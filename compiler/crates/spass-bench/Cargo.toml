@@ -1,0 +1,19 @@
+[package]
+name = "spass-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Benchmarks for the Spass compiler pipeline (parse -> semantic -> codegen)"
+
+[dependencies]
+spass-parser = { path = "../spass-parser" }
+spass-semantic = { path = "../spass-semantic" }
+spass-codegen = { path = "../spass-codegen" }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "pipeline"
+harness = false

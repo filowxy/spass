@@ -1,0 +1,43 @@
+# if_present example.
+#
+# A function with `if_present(name) { ... }` branches is split into
+# two variants at codegen time: `<name>_present` and `<name>_absent`.
+# The present variant runs the body of the `if_present(...)` block;
+# the absent variant runs the body of the optional `@absent { ... }`
+# block, or falls through if no `@absent` was supplied.
+#
+# Build with:
+#   spass run scale 2.0
+# which calls the *present* variant (Spass calls always supply every
+# argument), giving the doubled value 4.0. To exercise the *absent*
+# variant, ask for the explicit absent symbol:
+#   spass run _spass_scale_1_f_absent 2.0
+# which gives 0.5 (the @absent branch).
+
+# scale — doubles `x` when the user supplied it (present variant),
+# otherwise returns `1 / x` (absent variant). A user-facing function
+# like this might use the absent branch to mean "the caller is asking
+# for the inverse" — the present variant is the regular "I have a
+# value" path, the absent variant is the "I want the inverse" path.
+func scale(x: float): float {
+    if_present(x) {
+        return 2.0 * x
+    } @absent {
+        return 1.0 / x
+    }
+}
+
+# threshold — demonstrates the no-`@absent` shape. The function has an
+# `if_present` for `lo` and uses a fall-through value when the
+# caller did not supply it (the absent variant just returns
+# `threshold`).
+func threshold(value: float, lo: float): float {
+    let threshold: float = 0.0
+    if_present(lo) {
+        threshold = lo
+    }
+    if value < threshold {
+        return 0.0
+    }
+    return 1.0
+}

@@ -1,0 +1,15 @@
+[package]
+name = "spass-installer"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Native installer for the Spass language toolchain"
+publish = false
+
+[[bin]]
+name = "spass-setup"
+path = "src/main.rs"
+
+# No runtime dependencies: the installer only needs std plus the Windows
+# registry API, which is reached through `winreg`-free FFI below.
+[dependencies]

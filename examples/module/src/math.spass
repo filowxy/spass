@@ -1,0 +1,10 @@
+# math.spass — shared public functions.
+#
+# Section 7.2 (`include`): the same file is included into multiple
+# top-level files. The compiler's project-wide `expanded` set ensures
+# this file is only expanded once across the whole project, so the
+# second include is a no-op.
+
+func add(a: float, b: float): float {
+    return a + b
+}

@@ -1,0 +1,128 @@
+# Terrain example — minimal Spass module.
+#
+# This is a tiny but complete project: it defines a `height` function that
+# returns a value computed from two coordinates, plus a `slope` function
+# that classifies the terrain.
+#
+# After running `spass build` you should be able to run either function:
+#
+#   spass run height 0.5 1.5
+#   spass run slope 0.5 1.5
+#
+# Each call re-emits the Rust source, compiles it with rustc, and runs the
+# resulting binary with the requested function as argv[1].
+
+# height — a small fbm-style noise: distance from origin, plus a sin term.
+func height(x: float, z: float): float {
+    let r: float = x * x + z * z
+    let s: float = sin(r * 0.5)
+    return r * 0.1 + s
+}
+
+# slope — discretise height to an integer "slope class" in {0, 1, 2}.
+func slope(x: float, z: float): int {
+    let h: float = height(x, z)
+    if h < 0.5 {
+        return 0
+    } else {
+        if h < 2.0 {
+            return 1
+        } else {
+            return 2
+        }
+    }
+}
+
+# add — a smoke-test function for simple arithmetic.
+func add(a: float, b: float): float {
+    return a + b
+}
+
+# quantise — a value-domain function. The ABI takes/returns a uint8_t
+# (3 states, 2 bits). Run with `spass run quantise 5` to send state 5
+# (clamped to 2). The body decodes to a double and re-encodes on return.
+func quantise(x: float[0.0, 1.0, 0.5]): float[0.0, 1.0, 0.5] {
+    return x
+}
+
+# height_quant — a function that takes a quantised height (uint16 ABI)
+# and returns a quantised height. 0..380 step 0.1 -> 3801 states, 12 bits.
+func height_quant(h: float[0.0, 380.0, 0.1]): float[0.0, 380.0, 0.1] {
+    return h
+}
+
+# split_value — a multi-return function. Returns the value
+# itself and twice the value. Destructured at the call site via
+# `let (a, b) = split_value(3.0)`.
+func split_value(x: float): (float, float) {
+    return (x, x * 2.0)
+}
+
+# combine — consumes the multi-return result and adds the elements.
+# Also exercises the value-domain path on the result type.
+func combine(x: float): float[0.0, 1000.0, 0.1] {
+    let (a, b) = split_value(x)
+    return a + b
+}
+
+# write_two — exercises the `out` parameter ABI. The
+# caller passes two slots; the function writes into them. The body
+# sees them as plain `double` shadows, the ABI sees them as `f64*`.
+func write_two(x: float, out r: float, out s: float) {
+    r = x
+    s = x * 2.0
+}
+
+# write_quant — exercises a value-domain `out` parameter. The slot
+# is `uint16_t*` (12 bits, 3801 states for [0, 380, 0.1]); the body
+# decodes to a `double` and re-encodes on assignment.
+func write_quant(x: float, out q: float[0.0, 380.0, 0.1]) {
+    q = x
+}
+
+# tagged_add — exposes `add` under the bare tag `add_alias`.
+# `spass run add_alias 1.5 2.5` should resolve the tag and call this func.
+@tag(add_alias)
+func tagged_add(a: float, b: float): float {
+    return a + b
+}
+
+# ==== @dispatch end-to-end demo ====
+#
+# Two tagged "erosion" steps (subtraction and addition) and one tagged
+# "smoothing" step, all scheduled into a single left-fold via @dispatch.
+# The two erosion functions declare `@before(sculpt_smooth, require)` in
+# their bodies (the @before is a statement on the declaring
+# function, not on the dispatch site), so the topo-sort puts the smooth
+# step last. Source order is otherwise meaningless.
+#
+# Expected output for `spass run sculpt 10.0 5.0`:
+#   erode (5.0 - 1.0 = 4.0) -> deposit (4.0 + 0.5 = 4.5) -> smooth (4.5) = 4.5
+# (The `smooth` step returns h unchanged in this toy version; in a
+# real example it would blend neighbours. The test only verifies that
+# the dispatch expands and the @before/@after ordering is honoured.)
+
+@tag(erosion, kind=subtract)
+func sculpt_erode(pos: float, h: float, strength: float): float {
+    @before(sculpt_smooth, require)
+    return h - strength
+}
+
+@tag(erosion, kind=add)
+func sculpt_deposit(pos: float, h: float, rate: float): float {
+    @before(sculpt_smooth, require)
+    return h + rate
+}
+
+@tag(smooth)
+func sculpt_smooth(pos: float, h: float, blend: float): float {
+    # `blend` is unused in the toy body but the dispatch must still
+    # bind it (W002 would fire if the user's bind list omitted it).
+    return h
+}
+
+func sculpt(pos: float, h: float): float {
+    @dispatch(tags = {erosion, smooth}, bind = {strength: 1.0, rate: 0.5, blend: 0.1})
+    h = apply(pos, h)
+    return h
+}

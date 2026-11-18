@@ -1,0 +1,32 @@
+# Section 3.2: a list is a value with a runtime length. The element
+# type comes from the annotation or from the first element; the length
+# is read with `list.length` and the elements with `list[index]`.
+func sum_squares(): float {
+    let xs: list<float> = [1, 2, 3, 4]
+    let total: float = 0.0
+    for x in xs {
+        total = total + x * x
+    }
+    return total
+}
+
+func reach(): int {
+    let xs = [10, 20, 30]
+    return xs[1] + xs.length
+}
+
+func empty_length(): int {
+    let xs: list<float> = []
+    return xs.length
+}
+
+func nested(): float {
+    let rows: list<list<float>> = [[1.0, 2.0], [3.0, 4.0]]
+    let total: float = 0.0
+    for row in rows {
+        for value in row {
+            total = total + value
+        }
+    }
+    return total
+}

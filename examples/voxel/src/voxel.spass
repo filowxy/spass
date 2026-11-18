@@ -1,0 +1,55 @@
+# Voxel terrain (3D) — section 1.6: Spass generates the world, Java renders.
+#
+# An 8x8x8 voxel volume. The `gen3d` sequence walks every column (x, z):
+#   * `surface(x, z)` is the terrain height (layered sines);
+#   * each voxel gets a material code: 0=air 1=stone 2=water 3=grass
+#     (top of the ground columns);
+#   * a cave is carved with vec3 math: any voxel whose vec3 position is
+#     within 1.2 of the cave center becomes air (length(p - c) < 1.2);
+#   * the column's 8 codes are packed into ONE number with pow(8, y)
+#     (3 bits per voxel — max 4*8^7 stays exact in f64) and published
+#     with its column index; the sequence then blocks on "ack" until the
+#     Java renderer consumes the column.
+# After the last column it reports the total on "gen3d_done".
+
+func surface(x: float, z: float): float {
+    return sin(x * 0.9) * cos(z * 0.7) * 1.5 + 2.5
+}
+
+sequence gen3d {
+    let idx: float = 0.0
+    for z in 0..8 {
+        for x in 0..8 {
+            let h = surface(to_float(x), to_float(z))
+            let colv: float = 0.0
+            for y in 0..8 {
+                let p: vec3 = mk_vec3(to_float(x), to_float(y), to_float(z))
+                let c: vec3 = mk_vec3(4.0, 2.0, 4.0)
+                let dist = length(p - c)
+                let code: float = 0.0
+                if to_float(y) < h {
+                    if to_float(y) + 1.0 >= h {
+                        code = 3.0
+                    } else {
+                        code = 1.0
+                    }
+                } else {
+                    if to_float(y) < 2.0 {
+                        code = 2.0
+                    } else {
+                        code = 0.0
+                    }
+                }
+                if dist < 1.2 {
+                    code = 0.0
+                }
+                colv = colv + code * pow(8.0, to_float(y))
+            }
+            spasio:output[file](colv, "vox_col")
+            spasio:output[file](idx, "vox_idx")
+            idx = idx + 1.0
+            let ack = spasio:input[socket]("ack")
+        }
+    }
+    spasio:output[file](idx, "gen3d_done")
+}

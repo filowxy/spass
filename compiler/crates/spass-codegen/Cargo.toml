@@ -1,0 +1,18 @@
+[package]
+name = "spass-codegen"
+version.workspace = true
+edition.workspace = true
+description = "Spass language C code generator"
+license.workspace = true
+
+[dependencies]
+spass-lexer = { path = "../spass-lexer" }
+spass-parser = { path = "../spass-parser" }
+spass-infer = { path = "../spass-infer" }
+spass-semantic = { path = "../spass-semantic" }
+spass-runtime = { path = "../spass-runtime" }
+spass-transform = { path = "../spass-transform" }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+num-rational = { workspace = true }
+num-traits = { workspace = true }

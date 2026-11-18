@@ -1,0 +1,4 @@
+name = "vec"
+version = "0.1.0"
+[build]
+sources = ["src/vec.spass"]

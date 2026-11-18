@@ -1,0 +1,141 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<!-- Defines the WiX source for the Spass MSI installer. -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package Name="Spass"
+           Manufacturer="Spass Project"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="7F3C9A54-2D68-4B1E-9C07-5A8E36D24B90"
+           ProductCode="$(var.ProductCode)"
+           Language="1033"
+           Scope="perUser"
+           Compressed="yes"
+           InstallerVersion="500">
+
+    <SummaryInformation Description="Spass compiler toolchain" />
+
+    <!-- A newer build replaces this one; the old one is removed. -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Spass is already installed." />
+
+    <!-- The CAB is embedded, so the MSI is a single self-contained file. -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <Property Id="ARPPRODUCTICON" Value="SpassExeFile" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Spass">
+
+          <Component Id="SpassExe" Guid="1D8E4C70-93A5-4B62-8F1D-2C6B70A9E514">
+            <File Id="SpassExeFile" Source="$(var.PayloadDir)\spass.exe" KeyPath="yes" />
+              <!--
+              The install folder goes on the user's PATH. `Action="set"`
+              appends to the existing PATH rather than replacing it, and
+              the installer removes its own entry on uninstall.
+            -->
+            <Environment Id="SpassPath"
+                        Name="PATH"
+                        Value="[INSTALLFOLDER]"
+                        Part="last"
+                        Action="set"
+                        System="no" />
+                 <!-- The folder itself is not a component, so the uninstall
+                 has to remove it explicitly. -->
+            <RemoveFolder Id="RemoveInstallFolder" Directory="INSTALLFOLDER" On="uninstall" />
+          </Component>
+
+            <!--
+            `libunwind.dll` must sit next to spass.exe or the binary dies
+            before main() with STATUS_DLL_NOT_FOUND.
+          -->
+          <Component Id="SpassUnwindDll" Guid="C8A47B16-52E9-4F03-9B7C-3D6E8A15F927"
+                     Condition="Exists('$(var.PayloadDir)\libunwind.dll')">
+            <File Id="SpassUnwindDllFile" Source="$(var.PayloadDir)\libunwind.dll" KeyPath="yes" />
+          </Component>
+
+          <Directory Id="BootstrapFolder" Name="bootstrap">
+            <Component Id="SpassBootstrap" Guid="4F70D3B8-9A26-4E51-8C7D-5B1E6F93A248"
+                       Condition="Exists('$(var.PayloadDir)\bootstrap\bootstrap.spass')">
+              <File Id="SpassBootstrapFile" Source="$(var.PayloadDir)\bootstrap\bootstrap.spass" KeyPath="yes" />
+                   <!-- The folder itself is not a component, so the uninstall
+                   has to remove it explicitly. -->
+              <RemoveFolder Id="RemoveBootstrapFolder" Directory="BootstrapFolder" On="uninstall" />
+            </Component>
+          </Directory>
+
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="SpassMenuFolder" Name="Spass">
+        <Component Id="SpassShortcut" Guid="E3A18C52-7B49-4D06-9F81-2C5B70D6A139">
+          <Shortcut Id="SpassStartMenuShortcut"
+                    Name="Spass"
+                    Description="Spass compiler"
+                    Target="[INSTALLFOLDER]spass.exe"
+                    WorkingDirectory="INSTALLFOLDER" />
+          <RemoveFolder Id="RemoveStartMenuFolder" On="uninstall" />
+          <RegistryValue Root="HKCU"
+                         Key="Software\Spass Project\Spass"
+                         Name="InstallDir"
+                         Type="string"
+                         Value="[INSTALLFOLDER]"
+                         KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+      <!--
+      The `.saple` file association: a package is a document, and opening
+      one runs it through the saple runner. The keys live under the
+      user's own registry, so registering them never needs elevation.
+
+        Software\Classes\.saple                             -> spassfile.saple
+        Software\Classes\spassfile.saple                    -> Spass Package
+        Software\Classes\spassfile.saple\shell\open\command -> "spass.exe" runner "%1"
+
+      The util extension removes the keys it created when the package is
+      uninstalled, so the machine is left as it was found.
+    -->
+    <Component Id="SapleFileAssociation" Guid="5F1A2C8E-6D3B-4F70-9A15-8C2E6D0B7A41">
+      <RegistryKey Root="HKCU" Key="Software\Classes\.saple"
+                  ForceCreateOnInstall="yes" ForceDeleteOnUninstall="yes">
+        <RegistryValue Type="string" Value="spassfile.saple" KeyPath="yes" />
+      </RegistryKey>
+      <RegistryKey Root="HKCU" Key="Software\Classes\spassfile.saple"
+                  ForceCreateOnInstall="yes" ForceDeleteOnUninstall="yes">
+        <RegistryValue Type="string" Value="Spass Package" />
+      </RegistryKey>
+      <RegistryKey Root="HKCU" Key="Software\Classes\spassfile.saple\shell\open\command"
+                  ForceCreateOnInstall="yes" ForceDeleteOnUninstall="yes">
+        <RegistryValue Type="string"
+                      Value="&quot;[INSTALLFOLDER]spass.exe&quot; runner &quot;%1&quot;" />
+      </RegistryKey>
+    </Component>
+
+    <Feature Id="Main" Title="Spass compiler" Level="1">
+      <ComponentRef Id="SpassExe" />
+      <ComponentRef Id="SpassUnwindDll" />
+      <ComponentRef Id="SpassBootstrap" />
+      <ComponentRef Id="SpassShortcut" />
+      <ComponentRef Id="SapleFileAssociation" />
+    </Feature>
+
+      <!--
+      No package UI of its own: `msiexec` shows its own progress UI and
+      keeps it up until the install script finishes. A hand-written UI
+      sequence would need the `InstallExecute` action to block on the
+      script, and that action is not in WiX v5's standard library for
+      the UI sequence - without it a modeless progress dialog closes
+      while the files are still being copied.
+
+      `spass-setup.exe` remains the installer with a full interface; this
+      package is the quiet, scriptable one.
+    -->
+
+  </Package>
+</Wix>

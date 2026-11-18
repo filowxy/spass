@@ -1,0 +1,18 @@
+[package]
+name = "spass-semantic"
+version.workspace = true
+edition.workspace = true
+description = "Spass language semantic analysis"
+license.workspace = true
+
+[dependencies]
+spass-parser = { path = "../spass-parser" }
+spass-lexer = { path = "../spass-lexer" }
+spass-infer = { path = "../spass-infer" }
+num-rational = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# The playground surface is the contract between the semantic layer and
+# the two runtime backends; the test reads it from the runtime crate.
+spass-playground = { path = "../spass-playground" }

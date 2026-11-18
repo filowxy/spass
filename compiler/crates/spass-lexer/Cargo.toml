@@ -1,0 +1,9 @@
+[package]
+name = "spass-lexer"
+version.workspace = true
+edition.workspace = true
+description = "Spass language lexer"
+license.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }

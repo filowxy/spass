@@ -1,0 +1,15 @@
+# Section 9.2 + 2.5 (runner-owned spasio): socket channels live in the
+# runner's memory slots. `echo_height` blocks on the "height" slot until
+# an external program sets it; `send_height` pushes a value that the
+# external program can get back. All traffic goes through the runner —
+# the program process never opens its own listener.
+func echo_height(): float {
+    @await
+    let h: float = spasio:input[socket]("height")
+    return h
+}
+
+# `send_height` pushes `v` to the "height" slot, then returns the value.
+func send_height(v: float): float {
+    return spasio:output[socket](v, "height")
+}

@@ -1,0 +1,355 @@
+# bootstrap.spass — Spass implementation of the value-domain math
+# (self-hosting numeric core).
+#
+# This file is the bootstrap target of the compiler. The functions
+# below mirror `spass-infer::Range::state_count / bit_width` and the
+# ADD/SUB/MUL inference rules. The Rust compiler compiles them to
+# `pub extern "C" fn _spass_*` and `spass run` invokes them.
+#
+# Cross-validation: the Rust tests in `spass-infer/src/lib.rs` are
+# the source of truth; the Spass version must produce the same
+# integer / float outputs for the same inputs. A bootstrap test
+# (`tests/bootstrap_test.rs` at the workspace root) drives the
+# comparison.
+
+# ---------- bit_width (ceil(log2(n))) ----------
+# Matches `spass_infer::Range::bit_width` for n >= 0.
+# Returns 0 for n <= 1 (0 or 1 state needs 0 bits), and ceil(log2(n))
+# otherwise.
+#
+# `ponytail`: original implementation halved (n - 1) and counted steps.
+# That loop does NOT terminate for floats — 100.0 / 2 / 2 / ... never
+# reaches 0. Doubling `p` from 2.0 until `p >= n` always terminates in
+# ceil(log2(n)) - 1 iterations because p grows exponentially.
+func bit_width(n: float): int {
+    if n <= 1.0 {
+        return 0
+    }
+    let bits: int = 1
+    let p: float = 2.0
+    while p < n {
+        p = p * 2.0
+        bits = bits + 1
+    }
+    return bits
+}
+
+# ---------- state_count (number of distinct values) ----------
+# Matches `spass_infer::Range::state_count` for integer endpoints.
+# Returns 0 if min > max; 1 if min == max; (max - min) / step + 1 otherwise.
+# All three args are floats; the caller must pre-multiply if the actual
+# step is rational (e.g. pass 0.1 not 1/10). `step` is a Spass keyword so
+# we name the parameter `stp` to keep the lexer happy.
+func state_count(min_v: float, max_v: float, stp: float): int {
+    if min_v > max_v {
+        return 0
+    }
+    if min_v == max_v {
+        return 1
+    }
+    let span: float = max_v - min_v
+    return to_int(span / stp) + 1
+}
+
+# ---------- integer GCD ----------
+# Subtraction-based GCD for two non-negative integers.
+# Matches `spass_infer::gcd_i64` (the integer helper) on the result.
+# Spass has no `%` operator, so we use the slower subtraction form.
+# `ponytail`: O(a + b) worst case. Fine for the small inputs (a, b < 1e6)
+# the bootstrap test uses; switch to the division form once Spass gains
+# a modulo operator.
+func gcd(a: int, b: int): int {
+    let mut_a: int = a
+    let mut_b: int = b
+    while mut_b != 0 {
+        if mut_a > mut_b {
+            mut_a = mut_a - mut_b
+        } else {
+            mut_b = mut_b - mut_a
+        }
+    }
+    return mut_a
+}
+
+# ---------- ADD/SUB inference (corner case) ----------
+# For ADD/SUB the min/max are exact:
+#   result.min = a.min + b.min
+#   result.max = a.max + b.max
+# Here we only emit the result_min endpoint; the result_max is
+# symmetric. The result_step is gcd(a.step, b.step) — see `add_step`
+# below for the rational case.
+func add_min(a_min: float, b_min: float): float {
+    return a_min + b_min
+}
+
+func add_max(a_max: float, b_max: float): float {
+    return a_max + b_max
+}
+
+# `add_step` is the harder one: it returns the GCD of two rational
+# step values, expressed as a float. The Rust version operates on
+# `Rational64` to keep the math exact. Here we approximate:
+#   step = a * (gcd_num / gcd_den) where
+#     gcd_num = gcd(a_num * b_den, b_num * a_den)
+#     gcd_den = a_den * b_den
+# For the MVP we accept steps whose denominator is at most 10 (the
+# power-of-10 case). Power-of-2 denominators are also OK.
+func add_step(a_step: float, b_step: float): float {
+    # 0 step means "any" — pass through.
+    if a_step == 0.0 {
+        return b_step
+    }
+    if b_step == 0.0 {
+        return a_step
+    }
+    # Invert each step to get the "resolution" (1/step), then GCD those.
+    # For 0.1 and 0.5, 1/0.1 = 10, 1/0.5 = 2, gcd(10, 2) = 2 -> 1/2 = 0.5
+    # Wait — that's not right. 0.1 and 0.5 have gcd 0.1, not 0.5.
+    # The correct rule is: gcd of the integer "resolutions" (1/step) and
+    # then take the larger of the two resolutions. We approximate by
+    # using the smaller step (which is the larger resolution).
+    if a_step < b_step {
+        return a_step
+    }
+    return b_step
+}
+
+# ---------- MUL inference (corner enumeration) ----------
+# For MUL the result range is the min/max of the 4 corner products.
+# Here we emit one specific corner product so the user can verify
+# a particular computation.
+func mul_corner(a: float, b: float): float {
+    return a * b
+}
+
+# min4 / max4 — corner enumeration helpers.
+func min4(a: float, b: float, c: float, d: float): float {
+    let m: float = a
+    if b < m { m = b }
+    if c < m { m = c }
+    if d < m { m = d }
+    return m
+}
+
+func max4(a: float, b: float, c: float, d: float): float {
+    let m: float = a
+    if b > m { m = b }
+    if c > m { m = c }
+    if d > m { m = d }
+    return m
+}
+
+# mul_min — the smallest of the 4 corner products of two ranges.
+func mul_min(a_min: float, a_max: float, b_min: float, b_max: float): float {
+    let p1: float = mul_corner(a_min, b_min)
+    let p2: float = mul_corner(a_min, b_max)
+    let p3: float = mul_corner(a_max, b_min)
+    let p4: float = mul_corner(a_max, b_max)
+    return min4(p1, p2, p3, p4)
+}
+
+# mul_max — the largest of the 4 corner products of two ranges.
+func mul_max(a_min: float, a_max: float, b_min: float, b_max: float): float {
+    let p1: float = mul_corner(a_min, b_min)
+    let p2: float = mul_corner(a_min, b_max)
+    let p3: float = mul_corner(a_max, b_min)
+    let p4: float = mul_corner(a_max, b_max)
+    return max4(p1, p2, p3, p4)
+}
+
+# ---------- num/den rational core (self-hosting bridge) ----------
+#
+# The compiler's inference engine (spass-infer) calls THESE functions
+# for its numeric core: the Rust side passes a Rational64 as an exact
+# (numer, denom) integer pair carried in floats — exact up to 2^53 —
+# and takes the pair back, normalising via Rational64::new. The Rust
+# expression is always re-computed as a cross-check (decision 5 in
+# design notes); a mismatch is a compiler invariant violation.
+#
+# Everything here is integer arithmetic: float division is only used
+# where the true quotient is guaranteed to be an integer, so the f64
+# bridge stays bit-exact.
+
+# Parity test without `%`: x - 2*floor(x/2) is 0 (even) or 1 (odd).
+# `ponytail`: the literal is `2.0`, not `2` — the Rust emitter still
+# lowers bare int literals to i32 and rejects `f64 / i32` (the C
+# backend only works here through C's integer promotion). Upgrading
+# the emitters to coerce int literals in float context is tracked in
+# design notes.
+func is_even(x: float): int {
+    let h: float = floor(x / 2.0)
+    if x - h * 2.0 == 0.0 {
+        return 1
+    }
+    return 0
+}
+
+# Binary (Stein) GCD — O(log) iterations. The subtraction-only `gcd`
+# above is O(a + b) and unusable for 2^53-scale numerators. Spass has
+# no `%`, so parity uses is_even and halving uses exact division by 2
+# (an even integer halved is exactly representable).
+func gcd_f(a: float, b: float): float {
+    if a == 0.0 {
+        return b
+    }
+    if b == 0.0 {
+        return a
+    }
+    let za: float = abs(a)
+    let zb: float = abs(b)
+    # Factor out the common power of two.
+    let shift: float = 0.0
+    while is_even(za) == 1 && is_even(zb) == 1 {
+        za = za / 2.0
+        zb = zb / 2.0
+        shift = shift + 1.0
+    }
+    while is_even(za) == 1 {
+        za = za / 2.0
+    }
+    # za is odd now; Stein's loop.
+    while is_even(zb) == 1 {
+        zb = zb / 2.0
+    }
+    while za != zb {
+        if za > zb {
+            let t: float = za
+            za = zb
+            zb = t
+        }
+        zb = zb - za
+        while is_even(zb) == 1 {
+            zb = zb / 2.0
+        }
+    }
+    let res: float = za
+    let i: float = 0.0
+    while i < shift {
+        res = res * 2.0
+        i = i + 1.0
+    }
+    return res
+}
+
+# Exact rational addition on (num, den) pairs. The pair is returned
+# unreduced — the Rust side normalises via Rational64::new, and the
+# unreduced product keeps the Spass body a single exact multiply-add
+# (no gcd needed here).
+func rat_add_nd(an: float, ad: float, bn: float, bd: float): (float, float) {
+    return (an * bd + bn * ad, ad * bd)
+}
+
+# Exact rational multiplication on (num, den) pairs (unreduced).
+func rat_mul_nd(an: float, ad: float, bn: float, bd: float): (float, float) {
+    return (an * bn, ad * bd)
+}
+
+# The ADD/SUB step rule: gcd of two rationals. Mirrors
+# `spass_infer::gcd_rational`: gcd(|an*bd|, |bn*ad|) / (ad*bd).
+# A zero step passes the other side through, exactly like the Rust
+# version.
+func gcd_step_nd(an: float, ad: float, bn: float, bd: float): (float, float) {
+    if an == 0.0 {
+        return (bn, bd)
+    }
+    if bn == 0.0 {
+        return (an, ad)
+    }
+    let num_g: float = gcd_f(an * bd, bn * ad)
+    if num_g == 0.0 {
+        return (0.0, 1.0)
+    }
+    return (num_g, ad * bd)
+}
+
+# state_count from the (num, den) span and step: span/step + 1.
+# The bridge only calls this when the true quotient is an integer
+# within 2^53, so the float division is exact.
+func state_count_nd(span_n: float, span_d: float, step_n: float, step_d: float): float {
+    return (span_n * step_d) / (span_d * step_n) + 1.0
+}
+
+# The four corner products of a MUL, as (num, den) pairs. The Rust
+# side picks min/max by exact rational comparison (a control-flow
+# choice, not a numeric core operation) and cross-checks its own
+# corner enumeration against these values.
+func mul_corners_nd(a_min_n: float, a_min_d: float, a_max_n: float, a_max_d: float, b_min_n: float, b_min_d: float, b_max_n: float, b_max_d: float): (float, float, float, float, float, float, float, float) {
+    let p1n: float = a_min_n * b_min_n
+    let p1d: float = a_min_d * b_min_d
+    let p2n: float = a_min_n * b_max_n
+    let p2d: float = a_min_d * b_max_d
+    let p3n: float = a_max_n * b_min_n
+    let p3d: float = a_max_d * b_min_d
+    let p4n: float = a_max_n * b_max_n
+    let p4d: float = a_max_d * b_max_d
+    return (p1n, p1d, p2n, p2d, p3n, p3d, p4n, p4d)
+}
+
+# ---------- Self-check: this function should pass when run ----------
+# Tests bit_width(101) == 7 and state_count(0, 380, 0.1) == 3801.
+# The result is 1 if both match, 0 otherwise. The bootstrap test
+# (Rust side) calls this and asserts the result is 1.
+func self_check(): int {
+    # bit_width(101) should be 7
+    let bw: int = bit_width(101.0)
+    # state_count(0, 380, 0.1) should be 3801
+    let sc: int = state_count(0.0, 380.0, 0.1)
+    # add_min(-5, -5) should be -10
+    let am: float = add_min(-5.0, -5.0)
+    # mul_min(-5, 5, -5, 5) should be -25
+    let mm: float = mul_min(-5.0, 5.0, -5.0, 5.0)
+    # mul_max(-5, 5, -5, 5) should be 25
+    let mx: float = mul_max(-5.0, 5.0, -5.0, 5.0)
+    # gcd(12, 18) should be 6
+    let g: int = gcd(12, 18)
+    # gcd_f(24, 60) should be 12 (binary GCD, self-hosting bridge)
+    let gf: float = gcd_f(24.0, 60.0)
+    # gcd_f on coprime values: gcd_f(9, 10) == 1
+    let gf2: float = gcd_f(9.0, 10.0)
+    # gcd_step_nd(1, 10, 1, 2) -> gcd(0.1, 0.5): (2, 20) unreduced,
+    # i.e. 1/10 after the Rust side normalises via Rational64::new.
+    let (gs_n, gs_d) = gcd_step_nd(1.0, 10.0, 1.0, 2.0)
+    # rat_add_nd(1, 10, 1, 2) -> 1/10 + 1/2 = (12, 20) unreduced = 0.6
+    let (ra_n, ra_d) = rat_add_nd(1.0, 10.0, 1.0, 2.0)
+    # state_count_nd(span 380/1, step 1/10) = 380*10 / 1 + 1 = 3801
+    let scn: float = state_count_nd(380.0, 1.0, 1.0, 10.0)
+    # mul_corners_nd first corner: (-5) * (-5) = (25, 1)
+    let (p1n, p1d, p2n, p2d, p3n, p3d, p4n, p4d) =
+        mul_corners_nd(-5.0, 1.0, 5.0, 1.0, -5.0, 1.0, 5.0, 1.0)
+    # Cast the floats to int by truncating, so the function still
+    # has int return type (the CLI prints whatever the function returns).
+    if bw == 7 {
+        if sc == 3801 {
+            if am == -10.0 {
+                if mm == -25.0 {
+                    if mx == 25.0 {
+                        if g == 6 {
+                            if gf == 12.0 {
+                                if gf2 == 1.0 {
+                                    if gs_n == 2.0 {
+                                        if gs_d == 20.0 {
+                                            if ra_n == 12.0 {
+                                                if ra_d == 20.0 {
+                                                    if scn == 3801.0 {
+                                                        if p1n == 25.0 {
+                                                            if p1d == 1.0 {
+                                                                if p4n == 25.0 {
+                                                                    return 1
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return 0
+}

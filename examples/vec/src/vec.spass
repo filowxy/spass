@@ -1,0 +1,98 @@
+# Vector / matrix example.
+#
+# Exercises the vec/mat codegen path end-to-end. The CLI
+# dispatcher only takes f64 arguments, so each function takes
+# the components as separate f64 args and constructs a vec
+# inside the body. The vec/mat codegen is then exercised on
+# the body; the result is unwrapped to a single f64 for
+# printing.
+
+# dot product of two 3-vecs: (ax, ay, az) · (bx, by, bz).
+# vdot(1, 2, 3, 4, 5, 6) = 1*4 + 2*5 + 3*6 = 32
+func vdot(ax: float, ay: float, az: float, bx: float, by: float, bz: float): float {
+    let a: vec3 = mk_vec3(ax, ay, az)
+    let b: vec3 = mk_vec3(bx, by, bz)
+    return dot(a, b)
+}
+
+# length of a 2-vec from two scalars.
+# vlen(3, 4) = 5
+func vlen(x: float, y: float): float {
+    let v: vec2 = mk_vec2(x, y)
+    return length(v)
+}
+
+# length of a 3-vec.
+# vlen3(2, 3, 6) = 7
+func vlen3(x: float, y: float, z: float): float {
+    let v: vec3 = mk_vec3(x, y, z)
+    return length(v)
+}
+
+# x-component of normalize(vec2(x, y)).
+# vnorm_x(3, 4) = 0.6
+func vnorm_x(x: float, y: float): float {
+    let v: vec2 = mk_vec2(x, y)
+    return normalize(v).x
+}
+
+# y-component of cross(vec3(a, b, c), vec3(d, e, f)).
+# cross = (b*f - c*e, c*d - a*f, a*e - b*d)
+# vcross_y(1, 2, 3, 4, 5, 6): y = 3*4 - 1*6 = 6
+func vcross_y(a: float, b: float, c: float, d: float, e: float, f: float): float {
+    let p: vec3 = mk_vec3(a, b, c)
+    let q: vec3 = mk_vec3(d, e, f)
+    return cross(p, q).y
+}
+
+# y-component of vec-vec add.
+# vadd_y(1, 2, 3, 4, 5, 6): y = 2 + 5 = 7
+func vadd_y(ax: float, ay: float, az: float, bx: float, by: float, bz: float): float {
+    let a: vec3 = mk_vec3(ax, ay, az)
+    let b: vec3 = mk_vec3(bx, by, bz)
+    return (a + b).y
+}
+
+# x-component of vec-scalar multiply.
+# vscale_x(1, 2, 3, 3) = 1*3 = 3
+func vscale_x(x: float, y: float, z: float, s: float): float {
+    let v: vec3 = mk_vec3(x, y, z)
+    return (v * s).x
+}
+
+# x-component of scalar * vec (commutativity check).
+# vscale_x_rev(2, 3, 4, 2) = 2*2 = 4
+func vscale_x_rev(x: float, y: float, z: float, s: float): float {
+    let v: vec3 = mk_vec3(x, y, z)
+    return (s * v).x
+}
+
+# z-component of hadamard product.
+# vhadamard_z(2, 3, 4, 5, 6, 7) = 4*7 = 28
+func vhadamard_z(ax: float, ay: float, az: float, bx: float, by: float, bz: float): float {
+    let a: vec3 = mk_vec3(ax, ay, az)
+    let b: vec3 = mk_vec3(bx, by, bz)
+    return hadamard(a, b).z
+}
+
+# x-component of vec + scalar.
+# vadd_scalar_x(1, 2, 3) = 1 + 1 = 2
+func vadd_scalar_x(x: float, y: float, z: float): float {
+    let v: vec3 = mk_vec3(x, y, z)
+    return (v + 1.0).x
+}
+
+# x-component of vec-vec subtract.
+# vsub_x(5, 7, 9, 1, 2, 3) = 5 - 1 = 4
+func vsub_x(ax: float, ay: float, az: float, bx: float, by: float, bz: float): float {
+    let a: vec3 = mk_vec3(ax, ay, az)
+    let b: vec3 = mk_vec3(bx, by, bz)
+    return (a - b).x
+}
+
+# length of a 4-vec.
+# vlen4(1, 0, 0, 0) = 1
+func vlen4(x: float, y: float, z: float, w: float): float {
+    let v: vec4 = mk_vec4(x, y, z, w)
+    return length(v)
+}

@@ -1,0 +1,18 @@
+[package]
+name = "spass-optimize"
+version.workspace = true
+edition.workspace = true
+description = "Spass optional compile-time optimisations (off by default)"
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+spass-lexer = { path = "../spass-lexer" }
+spass-parser = { path = "../spass-parser" }
+spass-infer = { path = "../spass-infer" }
+spass-semantic = { path = "../spass-semantic" }
+spass-transform = { path = "../spass-transform" }
+num-rational = { workspace = true }
+num-traits = { workspace = true }

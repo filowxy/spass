@@ -1,0 +1,48 @@
+# struct example — minimal Spass module.
+#
+# This example exercises the struct mechanism.
+# It defines:
+#
+#   * `Point`       — a 2D point with a height field.
+#   * `make_point`  — construct a Point from x, y, height.
+#   * `height_of`   — read the height field of a Point.
+#   * `translate`   — return a translated Point (new instance).
+#   * `sum_heights` — sum the heights of two Points.
+#
+# Build with:
+#   spass run make_point 1.0 2.0 3.0
+# and expect 3.0 (the height of the constructed Point).
+#
+# `spass run translate 1.0 2.0 3.0 4.0 5.0` should give the result
+#   5.0 (the height of `p` after `translate(p, dx, dy)`).
+
+# Point — 2D point with a height field. Value-domain height makes
+# the value-domain encoding exercise also visible at the FFI
+# boundary.
+struct Point {
+    x: float,
+    y: float,
+    height: float[0.0, 100.0, 0.1]
+}
+
+# make_point — build a Point from its fields.
+func make_point(x: float, y: float, h: float): Point {
+    return Point{x: x, y: y, height: h}
+}
+
+# height_of — read a Point's height field.
+func height_of(p: Point): float {
+    return p.height
+}
+
+# translate — return a translated Point.
+func translate(p: Point, dx: float, dy: float): Point {
+    let nx: float = p.x + dx
+    let ny: float = p.y + dy
+    return Point{x: nx, y: ny, height: p.height}
+}
+
+# sum_heights — sum the heights of two Points.
+func sum_heights(a: Point, b: Point): float {
+    return a.height + b.height
+}

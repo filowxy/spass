@@ -1,0 +1,50 @@
+# Terrain generator (section 1.6: Spass generates the world, Java renders).
+#
+# The `gen` sequence runs in the resident world: for each of the 16x16
+# tiles it computes a height (layered sines — a cheap stand-in for the
+# built-in `fbm`), classifies it into a tile code (0=water 1=sand 2=grass
+# 3=mountain), publishes (index, height, code) on file slots, and then
+# BLOCKS on the "ack" socket channel until the Java renderer confirms it
+# consumed the tile. After the last tile it reports the total on
+# "gen_done" and the sequence terminates (the world exits).
+#
+# All state — heights, classification, progress — lives here in Spass.
+# The Java front end only sends acks and renders what it receives.
+
+func height(x: float, z: float): float {
+    let h = sin(x * 0.8) * cos(z * 0.6) + sin((x + z) * 0.3) * 0.5
+    return h
+}
+
+func tile_code(h: float): float {
+    let c: float = 0.0
+    if h < -0.2 {
+        c = 0.0
+    } else {
+        if h < 0.1 {
+            c = 1.0
+        } else {
+            if h < 0.8 {
+                c = 2.0
+            } else {
+                c = 3.0
+            }
+        }
+    }
+    return c
+}
+
+sequence gen {
+    let idx: float = 0.0
+    for z in 0..16 {
+        for x in 0..16 {
+            let h = height(to_float(x), to_float(z))
+            spasio:output[file](tile_code(h), "tile_code")
+            spasio:output[file](h, "tile_h")
+            spasio:output[file](idx, "tile_idx")
+            idx = idx + 1.0
+            let ack = spasio:input[socket]("ack")
+        }
+    }
+    spasio:output[file](idx, "gen_done")
+}

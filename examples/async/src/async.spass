@@ -1,0 +1,11 @@
+# Section 5.4: async calls. `spawn` launches `work` on a worker
+# thread and returns a task handle; `await(t)` joins it and yields
+# the result. driver(3, 4) = 3*2 + 4 = 10.
+func work(a: float, b: float): float {
+    return a * 2.0 + b
+}
+
+func driver(x: float, y: float): float {
+    let t = spawn work(x, y)
+    return await(t)
+}
