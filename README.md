@@ -17,5 +17,4 @@ call through a runner, or load in-process as a shared library.
 ## Documentation
 
 All usage documentation — building, installing, the CLI, packaging, the
-language guide, and the repository layout — lives in the
-[wiki](https://github.com/filowxy/spass/wiki).
+language guide, and the repository layout — lives in [docs/](docs/Home.md).
