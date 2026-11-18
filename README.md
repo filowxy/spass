@@ -14,6 +14,13 @@ sample count, precision is unbounded, and there is no LOD switching or chunk
 boundary management. The compiler emits native modules that external programs
 call through a runner, or load in-process as a shared library.
 
+## Install on Windows
+
+Download from the [latest release](https://github.com/filowxy/spass/releases/latest):
+
+- `spass-setup.exe` — self-contained installer, no admin rights.
+- `spass-0.1.0-x64.msi` — per-user Windows Installer package, scriptable with `msiexec`.
+
 ## Documentation
 
 All usage documentation — building, installing, the CLI, packaging, the
