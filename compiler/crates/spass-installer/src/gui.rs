@@ -3,11 +3,11 @@
 use std::ffi::c_void;
 use std::sync::OnceLock;
 use std::os::raw::c_int;
-use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
 use crate::theme;
 use crate::ui::Reporter;
+use crate::Scope;
 
 // ---------------------------------------------------------------------------
 // Win32 types
@@ -404,6 +404,12 @@ const ID_SECTION_OPT: isize = 114;
 const ID_SECTION_LOG: isize = 115;
 const ID_SECTION_PROG: isize = 117;
 const ID_RUST_NOTE: isize = 116;
+// Scope selector cards.
+const ID_SCOPE_SECTION: isize = 118;
+const ID_SCOPE_USER: isize = 119;
+const ID_SCOPE_MACHINE: isize = 120;
+const ID_SCOPE_NOTE: isize = 121;
+const ID_VERSION: isize = 122;
 
 /// GDI brushes shared by the window.
 ///
@@ -417,6 +423,7 @@ struct Brushes {
     panel: isize,
     track: isize,
     log: isize,
+    soft: isize,
 }
 
 static BRUSHES: OnceLock<Brushes> = OnceLock::new();
@@ -432,6 +439,16 @@ struct Ui {
     path: HWND,
     chk_path: HWND,
     chk_rust: HWND,
+    scope_user: HWND,
+    scope_machine: HWND,
+    /// Installation scope chosen in the window. Mirrors the two radio cards.
+    scope: Scope,
+    /// Inherited from the command line: true when this process is already
+    /// elevated and must not ask for UAC again.
+    elevated: bool,
+    /// True when the window should kick off the install on its own (the
+    /// elevated relaunch uses this so the user never clicks twice).
+    autostart: bool,
     busy: bool,
     /// Filled fraction of the progress bar, 0.0..=1.0.
     progress: f64,
@@ -489,7 +506,10 @@ impl Ui {
     /// Enable or disable every input while work is in flight.
     unsafe fn set_busy(&mut self, busy: bool) {
         self.busy = busy;
-        for h in [self.btn_install, self.btn_uninstall, self.path, self.chk_path, self.chk_rust] {
+        for h in [
+            self.btn_install, self.btn_uninstall, self.path, self.chk_path, self.chk_rust,
+            self.scope_user, self.scope_machine,
+        ] {
             EnableWindow(h, if busy { FALSE_ } else { TRUE_ });
         }
     }
@@ -548,8 +568,9 @@ const C_TEXT_BRIGHT: usize = 11;
 const C_TEXT_DIM: usize = 12;
 const C_FOCUS: usize = 13;
 const C_ON_ACCENT: usize = 14;
+const C_ACCENT_SOFT: usize = 15;
 
-const BTN_COLORS: [u32; 15] = [
+const BTN_COLORS: [u32; 16] = [
     theme::ACCENT,          // C_ACCENT
     theme::ACCENT_HOVER,    // C_ACCENT_HOVER
     theme::ACCENT_PRESSED,  // C_ACCENT_PRESSED
@@ -565,13 +586,14 @@ const BTN_COLORS: [u32; 15] = [
     theme::TEXT_DIM,        // C_TEXT_DIM
     theme::FOCUS,           // C_FOCUS
     theme::TEXT_BRIGHT,     // C_ON_ACCENT (the tick on a filled box)
+    theme::ACCENT_SOFT,     // C_ACCENT_SOFT (selected scope card)
 ];
 
 /// Brushes and pens, built once. Allocating them inside `WM_DRAWITEM`
 /// would leak a GDI object for every repaint of every button.
 struct BtnArt {
-    fills: [isize; 15],
-    pens: [isize; 15],
+    fills: [isize; 16],
+    pens: [isize; 16],
 }
 
 static BTN_ART: OnceLock<BtnArt> = OnceLock::new();
@@ -591,6 +613,11 @@ fn is_primary(id: isize) -> bool {
 /// The two option rows, which get a tick box instead of a filled face.
 fn is_option(id: isize) -> bool {
     id == ID_ADDPATH || id == ID_RUST
+}
+
+/// The two scope cards ("Just me" / "All users") get a distinct card face.
+fn is_scope_card(id: isize) -> bool {
+    id == ID_SCOPE_USER || id == ID_SCOPE_MACHINE
 }
 
 /// Read a window's caption into a NUL-terminated UTF-16 buffer.
@@ -664,6 +691,10 @@ unsafe fn draw_button(hdc: HDC, art: &BtnArt, b: &BtnBox, state: u32) {
     if b.font != 0 {
         theme::select_object(hdc, b.font);
     }
+    if is_scope_card(b.id) {
+        draw_scope_card(hdc, art, b, state);
+        return;
+    }
     if is_option(b.id) {
         draw_option_row(hdc, art, b, state);
         return;
@@ -692,6 +723,62 @@ unsafe fn draw_button(hdc: HDC, art: &BtnArt, b: &BtnBox, state: u32) {
     let mut tr = b.rect;
     let flags = theme::DT_CENTER | theme::DT_VCENTER | theme::DT_SINGLELINE | theme::DT_NOPREFIX;
     draw_label(hdc, &b.caption, BTN_COLORS[text], &mut tr, flags);
+}
+
+/// A scope card: a rounded, bordered panel with a radio dot, a bold title
+/// and a caption. The selected card gets an accent border, a soft tint and a
+/// filled radio dot; the other stays flat. This is the "who is this for?"
+/// choice that used to be missing from the installer.
+unsafe fn draw_scope_card(hdc: HDC, art: &BtnArt, b: &BtnBox, state: u32) {
+    let enabled = state & ODS_DISABLED == 0;
+    let pressed = state & ODS_SELECTED != 0;
+    let hovered = state & ODS_HOTLIGHT != 0;
+    let selected = b.checked;
+
+    let (fill, border) = if !enabled {
+        (C_SURFACE, C_BORDER_DIM)
+    } else if selected {
+        (C_ACCENT_SOFT, C_ACCENT)
+    } else if pressed {
+        (C_SURFACE_PRESSED, C_BORDER_STRONG)
+    } else if hovered {
+        (C_SURFACE_HOVER, C_BORDER_STRONG)
+    } else {
+        (C_SURFACE, C_BORDER)
+    };
+    fill_round(hdc, art, fill, border, &b.rect, theme::px(10));
+
+    // Radio dot on the left.
+    let d = theme::px(18);
+    let dot_left = b.rect.left + theme::px(16);
+    let dot_top = b.rect.top + (b.rect.bottom - b.rect.top - d) / 2;
+    let dot = RECT { left: dot_left, top: dot_top, right: dot_left + d, bottom: dot_top + d };
+    let ring = if enabled { C_BORDER_STRONG } else { C_BORDER_DIM };
+    fill_round(hdc, art, C_SURFACE, ring, &dot, d / 2);
+    if selected {
+        let inner = theme::px(4);
+        let core = RECT {
+            left: dot.left + inner, top: dot.top + inner,
+            right: dot.right - inner, bottom: dot.bottom - inner,
+        };
+        let f = if enabled { C_ACCENT } else { C_DISABLED_FILL };
+        let old_brush = theme::select_object(hdc, art.fills[f]);
+        theme::ellipse(hdc, core.left, core.top, core.right, core.bottom);
+        theme::select_object(hdc, old_brush);
+    }
+
+    // Card title to the right of the dot, vertically centred. The detailed
+    // explanation lives in the hint label under both cards.
+    let text_left = dot.right + theme::px(14);
+    let mut title_rc = RECT {
+        left: text_left,
+        top: b.rect.top,
+        right: b.rect.right - theme::px(14),
+        bottom: b.rect.bottom,
+    };
+    let title_color = if enabled { C_TEXT } else { C_TEXT_DIM };
+    draw_label(hdc, &b.caption, BTN_COLORS[title_color], &mut title_rc,
+        theme::DT_LEFT | theme::DT_VCENTER | theme::DT_SINGLELINE | theme::DT_NOPREFIX);
 }
 
 /// A checkbox row: a rounded tick box on the left, caption to its right.
@@ -809,6 +896,27 @@ unsafe fn paint_banner(
         theme::draw_text(hdc, &sub, &mut r, flags);
         theme::select_object(hdc, old);
     }
+
+    // A quiet version badge on the right, inside a translucent-looking pill.
+    // It is drawn from GDI primitives so it needs no extra control.
+    if let Some(art) = BTN_ART.get() {
+        let version = wide(concat!("v", env!("CARGO_PKG_VERSION")));
+        let badge_w = theme::px(64);
+        let badge_h = theme::px(24);
+        let badge = RECT {
+            left: rect.right - pad - badge_w,
+            top: rect.top + (rect.bottom - rect.top - badge_h) / 2 - theme::px(2),
+            right: rect.right - pad,
+            bottom: rect.top + (rect.bottom - rect.top + badge_h) / 2 - theme::px(2),
+        };
+        fill_round(hdc, art, C_ACCENT_PRESSED, C_ACCENT_PRESSED, &badge, theme::px(12));
+        if sub_font != 0 {
+            let old = theme::select_object(hdc, sub_font);
+            theme::draw_text(hdc, &version, &mut { badge },
+                theme::DT_CENTER | theme::DT_VCENTER | theme::DT_SINGLELINE | theme::DT_NOPREFIX);
+            theme::select_object(hdc, old);
+        }
+    }
 }
 
 /// Draw a progress bar into `rect` on an already-begun DC.
@@ -878,6 +986,13 @@ unsafe extern "system" fn wnd_proc(
                     }
                 }
             }
+            // Scope cards behave like a radio pair: selecting one clears the
+            // other and moves the default install location accordingly.
+            if id == ID_SCOPE_USER || id == ID_SCOPE_MACHINE {
+                if let Some(ui) = Ui::from_hwnd(hwnd) {
+                    select_scope(ui, if id == ID_SCOPE_MACHINE { Scope::Machine } else { Scope::User });
+                }
+            }
             match id {
                 ID_INSTALL => {
                     if let Some(ui) = Ui::from_hwnd(hwnd) {
@@ -891,7 +1006,7 @@ unsafe extern "system" fn wnd_proc(
                 }
                 ID_DEFAULT => {
                     if let Some(ui) = Ui::from_hwnd(hwnd) {
-                        let d = crate::default_install_dir();
+                        let d = ui.scope.default_dir();
                         set_text(ui.path, &d.display().to_string());
                     }
                 }
@@ -1080,7 +1195,7 @@ unsafe extern "system" fn wnd_proc(
             // The brushes live in the process-wide slot rather than in `Ui`,
             // so they are released here and stay valid for the whole window.
             if let Some(b) = BRUSHES.get() {
-                for b in [b.accent, b.accent_dark, b.panel, b.track, b.log] {
+                for b in [b.accent, b.accent_dark, b.panel, b.track, b.log, b.soft] {
                     if b != 0 {
                         theme::delete_object(b);
                     }
@@ -1116,24 +1231,102 @@ unsafe fn read_opts(ui: &Ui) -> crate::Opts {
         force: true,
         silent: true,
         install_rust,
+        scope: ui.scope,
+        elevated: ui.elevated,
+        autostart: ui.autostart,
     }
+}
+
+/// Apply a scope choice: update cached radio state, repaint both cards, and
+/// move the location field to that scope's default *only if* the user has not
+/// typed a custom path (i.e. it still matches a known default).
+unsafe fn select_scope(ui: &mut Ui, scope: Scope) {
+    ui.scope = scope;
+    for (id, is_sel) in [
+        (ID_SCOPE_USER, scope == Scope::User),
+        (ID_SCOPE_MACHINE, scope == Scope::Machine),
+    ] {
+        let h = GetDlgItem(ui.hwnd, id as c_int);
+        if h != 0 {
+            let st = if is_sel { BST_CHECKED } else { 0 };
+            SendMessageW(h, BM_SETCHECK, st, 0);
+            InvalidateRect(h, std::ptr::null(), FALSE_);
+        }
+        if let Some(b) = ui.buttons.iter_mut().find(|b| b.id == id) {
+            b.checked = is_sel;
+        }
+    }
+    let current = get_text(ui.path);
+    let user_default = Scope::User.default_dir().display().to_string();
+    let machine_default = Scope::Machine.default_dir().display().to_string();
+    let next_default = scope.default_dir().display().to_string();
+    if current.trim() == user_default || current.trim() == machine_default {
+        set_text(ui.path, &next_default);
+    }
+    let note = GetDlgItem(ui.hwnd, ID_SCOPE_NOTE as c_int);
+    if note != 0 {
+        set_text(note, if scope == Scope::Machine {
+            "Installed for everyone on this PC. Needs administrator rights."
+        } else {
+            "Installed for your account only. No administrator rights needed."
+        });
+    }
+    ui.status(if scope == Scope::Machine {
+        "All users: writes to Program Files and the system PATH (admin required)."
+    } else {
+        "Just me: writes to your user profile and user PATH."
+    });
 }
 
 /// Spawn the install on a worker thread and return immediately.
 fn do_install(ui: &mut Ui) {
     unsafe {
-        let opts = read_opts(ui);
+        let mut opts = read_opts(ui);
+
+        // A machine-wide install needs write access to HKLM and Program
+        // Files. If we are not elevated yet, hand the exact same choices to
+        // an elevated copy of ourselves, which reopens the window and starts
+        // the install straight away (`--autostart`).
+        if opts.scope == Scope::Machine && !opts.elevated && !crate::elevate::is_admin() {
+            let mut relaunch = vec![
+                "--scope".to_string(), "machine".to_string(),
+                "--elevated".to_string(), "--autostart".to_string(),
+                "--install-dir".to_string(), opts.install_dir.display().to_string(),
+            ];
+            if !opts.add_to_path {
+                relaunch.push("--no-path".to_string());
+            }
+            if opts.install_rust {
+                relaunch.push("--install-rust".to_string());
+            }
+            if crate::elevate::relaunch_elevated(&crate::shell_join(&relaunch)) {
+                ui.status("Administrator rights granted - continuing in the elevated window.");
+                ui.log_line("    elevated install started in a new window");
+                // Ask this (non-elevated) window to close. The elevated copy
+                // owns the rest of the operation.
+                PostMessageW(ui.hwnd, WM_CLOSE, 0, 0);
+            } else {
+                ui.status("Administrator rights were not granted.");
+                ui.log_line("!! elevation was cancelled or failed");
+            }
+            return;
+        }
+        // We are the elevated copy: never ask for confirmation again.
+        if opts.elevated {
+            opts.force = true;
+        }
 
         // Ask up front what the worker would otherwise ask on stdin.
-        if opts.install_dir.join("spass.exe").exists() {
-            let msg = format!(
-                "Spass is already installed in:\n\n{}\n\nReplace it?",
-                opts.install_dir.display()
-            );
-            if !message_box(ui.hwnd, &msg, "Replace existing install?", MB_YESNO | MB_ICONQUESTION) {
-                ui.log_line("    cancelled");
-                return;
-            }
+        if opts.install_dir.join("spass.exe").exists()
+            && !message_box(
+                ui.hwnd,
+                &format!("Spass is already installed in:\n\n{}\n\nReplace it?", opts.install_dir.display()),
+                "Replace existing install?",
+                MB_YESNO | MB_ICONQUESTION,
+            )
+        {
+            ui.log_line("    cancelled");
+            return;
         }
 
         ui.set_busy(true);
@@ -1159,6 +1352,25 @@ fn do_uninstall(ui: &mut Ui) {
     unsafe {
         let mut opts = read_opts(ui);
         opts.uninstall = true;
+
+        if opts.scope == Scope::Machine && !opts.elevated && !crate::elevate::is_admin() {
+            let mut relaunch = vec![
+                "--scope".to_string(), "machine".to_string(),
+                "--elevated".to_string(), "--autostart".to_string(),
+                "--uninstall".to_string(),
+                "--install-dir".to_string(), opts.install_dir.display().to_string(),
+            ];
+            if crate::elevate::relaunch_elevated(&crate::shell_join(&relaunch)) {
+                ui.status("Administrator rights granted - continuing in the elevated window.");
+                PostMessageW(ui.hwnd, WM_CLOSE, 0, 0);
+            } else {
+                ui.status("Administrator rights were not granted.");
+            }
+            return;
+        }
+        if opts.elevated {
+            opts.force = true;
+        }
 
         if !opts.install_dir.exists() {
             ui.log_line("    nothing to remove - Spass is not installed there");
@@ -1227,8 +1439,12 @@ const WM_QUIT_: UINT = 0x0012;
 const WS_CLIPCHILDREN: u32 = 0x0200_0000;
 
 /// Build the window and run the message loop. Returns a process exit code.
-pub fn run(default_dir: &std::path::Path, reporter: Arc<GuiReporter>) -> i32 {
+pub fn run(opts: &crate::Opts, reporter: Arc<GuiReporter>) -> i32 {
     unsafe {
+        // The installer is a console-subsystem binary so the CLI works from a
+        // terminal. A double-click would otherwise leave an empty console
+        // window behind the GUI; detach it now that we know we are windowed.
+        crate::elevate::free_console();
         theme::enable_visual_styles();
         let hinstance = GetModuleHandleW(std::ptr::null());
         let class_name = wide("SpassSetupWindow");
@@ -1252,9 +1468,9 @@ pub fn run(default_dir: &std::path::Path, reporter: Arc<GuiReporter>) -> i32 {
         // up on high-DPI displays without a per-monitor manifest.
         let s = |v: i32| theme::px(v);
         let pad = s(24);
-        let banner_h = s(84);
-        let win_w = s(700);
-        let win_h = s(660);
+        let banner_h = s(96);
+        let win_w = s(680);
+        let win_h = s(720);
 
         let title = wide("Spass Setup");
         let hwnd = CreateWindowExW(
@@ -1288,6 +1504,7 @@ pub fn run(default_dir: &std::path::Path, reporter: Arc<GuiReporter>) -> i32 {
         let b_panel = theme::create_brush(theme::PANEL).unwrap_or(0);
         let b_track = theme::create_brush(theme::TRACK).unwrap_or(0);
         let b_log = theme::create_brush(theme::LOG_BG).unwrap_or(0);
+        let b_soft = theme::create_brush(theme::ACCENT_SOFT).unwrap_or(0);
 
         // Publish the brushes before any child exists. `WM_CTLCOLOR*` fires
         // while children are still being created, which is long before
@@ -1299,6 +1516,7 @@ pub fn run(default_dir: &std::path::Path, reporter: Arc<GuiReporter>) -> i32 {
             panel: b_panel,
             track: b_track,
             log: b_log,
+            soft: b_soft,
         });
 
         let set_font = |h: HWND, f: isize| {
@@ -1334,8 +1552,34 @@ pub fn run(default_dir: &std::path::Path, reporter: Arc<GuiReporter>) -> i32 {
         // HDC, font, and colours are all under our direct control.
         let banner_rect = RECT { left: 0, top: 0, right: client_w, bottom: banner_h };
 
+        // ---- Who is this for? -----------------------------------------
+        let y_scope = banner_h + s(18);
+        lbl("WHO IS THIS FOR?", pad, y_scope, s(300), s(18), ID_SCOPE_SECTION, f_section);
+        let card_gap = s(12);
+        let card_w = (field_w - card_gap) / 2;
+        let card_y = y_scope + s(24);
+        let card_h = s(58);
+        let mk_card = |text: &str, x: i32, id: isize, checked: bool| {
+            let c = make_control(hwnd, "BUTTON", text, BS_OWNERDRAW | WS_TABSTOP, x, card_y, card_w, card_h, id);
+            set_font(c, f_body);
+            if checked {
+                SendMessageW(c, BM_SETCHECK, BST_CHECKED, 0);
+            }
+            c
+        };
+        let scope_user = mk_card("Just me", pad, ID_SCOPE_USER, opts.scope == Scope::User);
+        let scope_machine = mk_card("All users", pad + card_w + card_gap, ID_SCOPE_MACHINE, opts.scope == Scope::Machine);
+        lbl(
+            if opts.scope == Scope::Machine {
+                "Installed for everyone on this PC. Needs administrator rights."
+            } else {
+                "Installed for your account only. No administrator rights needed."
+            },
+            pad + s(2), card_y + card_h + s(4), field_w - s(4), s(18), ID_SCOPE_NOTE, f_sub,
+        );
+
         // ---- Install location ----------------------------------------
-        let y_loc = banner_h + s(20);
+        let y_loc = card_y + card_h + s(30);
         lbl("INSTALL LOCATION", pad, y_loc, s(300), s(18), ID_SECTION_LOC, f_section);
         // The path box and the reset button share the row, so the box gets
         // the column minus the button and the gap between them.
@@ -1345,7 +1589,7 @@ pub fn run(default_dir: &std::path::Path, reporter: Arc<GuiReporter>) -> i32 {
         let path = make_control(
             hwnd,
             "EDIT",
-            &default_dir.display().to_string(),
+            &opts.install_dir.display().to_string(),
             ES_AUTOVSCROLL | WS_BORDER | WS_TABSTOP,
             pad,
             y_loc + s(24),
@@ -1493,7 +1737,8 @@ pub fn run(default_dir: &std::path::Path, reporter: Arc<GuiReporter>) -> i32 {
             // client origin in screen coordinates to convert from.
             let mut origin = POINT { x: 0, y: 0 };
             ClientToScreen(hwnd, &mut origin);
-            for id in [ID_ADDPATH, ID_RUST, ID_DEFAULT, ID_INSTALL, ID_UNINSTALL, ID_CLOSE] {
+            for id in [ID_ADDPATH, ID_RUST, ID_DEFAULT, ID_INSTALL, ID_UNINSTALL, ID_CLOSE,
+                       ID_SCOPE_USER, ID_SCOPE_MACHINE] {
                 let h = GetDlgItem(hwnd, id as c_int);
                 if h != 0 {
                     let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
@@ -1523,6 +1768,8 @@ pub fn run(default_dir: &std::path::Path, reporter: Arc<GuiReporter>) -> i32 {
         let ui = Box::new(Ui {
             hwnd, log, status,
             btn_install, btn_uninstall, path, chk_path, chk_rust,
+            scope_user, scope_machine, scope: opts.scope,
+            elevated: opts.elevated, autostart: opts.autostart,
             busy: false,
             progress: 0.0,
             progress_active: false,
@@ -1542,6 +1789,18 @@ pub fn run(default_dir: &std::path::Path, reporter: Arc<GuiReporter>) -> i32 {
         // paints the banner and the empty groove. A second BeginPaint here
         // would be a second, non-existent update region.
         UpdateWindow(hwnd);
+
+        // The elevated relaunch hands its choices back through the command
+        // line and asks us to begin without a second click.
+        if opts.autostart {
+            if let Some(ui) = Ui::from_hwnd(hwnd) {
+                if opts.uninstall {
+                    do_uninstall(ui);
+                } else {
+                    do_install(ui);
+                }
+            }
+        }
 
         let mut msg = MSG { hwnd: 0, message: 0, wparam: 0, lparam: 0, time: 0, pt: POINT { x: 0, y: 0 } };
         loop {

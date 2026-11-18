@@ -72,6 +72,7 @@ type SelectObjectFn = unsafe extern "system" fn(HDC, HGDIOBJ) -> HGDIOBJ;
 type DrawTextWFn =
     unsafe extern "system" fn(HDC, *const u16, c_int, *mut crate::gui::RECT, u32) -> c_int;
 type RoundRectFn = unsafe extern "system" fn(HDC, c_int, c_int, c_int, c_int, c_int, c_int) -> c_int;
+type EllipseFn = unsafe extern "system" fn(HDC, c_int, c_int, c_int, c_int) -> c_int;
 type CreatePenFn = unsafe extern "system" fn(c_int, c_int, u32) -> HPEN;
 type GetSysColorFn = unsafe extern "system" fn(c_int) -> u32;
 type LineToFn = unsafe extern "system" fn(HDC, c_int, c_int) -> c_int;
@@ -100,6 +101,7 @@ pub struct Gdi {
     pub fill_rect: Option<FillRectFn>,
     pub select_object: Option<SelectObjectFn>,
     pub round_rect: Option<RoundRectFn>,
+    pub ellipse: Option<EllipseFn>,
     pub create_pen: Option<CreatePenFn>,
     pub get_sys_color: Option<GetSysColorFn>,
     pub line_to: Option<LineToFn>,
@@ -135,6 +137,7 @@ pub fn gdi() -> &'static Gdi {
             fill_rect: symbol("user32.dll", b"FillRect\0"),
             select_object: symbol("gdi32.dll", b"SelectObject\0"),
             round_rect: symbol("gdi32.dll", b"RoundRect\0"),
+            ellipse: symbol("gdi32.dll", b"Ellipse\0"),
             create_pen: symbol("gdi32.dll", b"CreatePen\0"),
             get_sys_color: symbol("user32.dll", b"GetSysColor\0"),
             line_to: symbol("gdi32.dll", b"LineTo\0"),
@@ -150,30 +153,35 @@ pub const fn rgb(r: u8, g: u8, b: u8) -> u32 {
     ((b as u32) << 16) | ((g as u32) << 8) | (r as u32)
 }
 
-/// The accent used for the header band and the filled part of the bar.
-/// Colours for the rounded button faces. Windows supplies no rounded
-/// button, so these are defined here and resolved once at startup.
-pub const ACCENT: u32 = rgb(0x2D, 0x5B, 0xD4);
-/// Hovered face for the default (primary) button: a touch lighter.
-pub const ACCENT_HOVER: u32 = rgb(0x3E, 0x6B, 0xE0);
-/// Pressed face for the default button: a touch darker.
-pub const ACCENT_PRESSED: u32 = rgb(0x23, 0x47, 0xAC);
+/// The accent used for the header band, the filled button and the selected
+/// scope card. A modern indigo that reads as "toolchain" rather than "system
+/// dialog". Windows supplies no rounded button, so all faces are drawn here.
+pub const ACCENT: u32 = rgb(0x4F, 0x46, 0xE5);
+/// Hovered face for the default (primary) button: a touch darker.
+pub const ACCENT_HOVER: u32 = rgb(0x43, 0x38, 0xCA);
+/// Pressed face for the default button: darker again.
+pub const ACCENT_PRESSED: u32 = rgb(0x37, 0x30, 0xA3);
 /// Resting face for secondary buttons, matching the window background.
 pub const SURFACE: u32 = rgb(0xFF, 0xFF, 0xFF);
-pub const SURFACE_HOVER: u32 = rgb(0xF1, 0xF4, 0xFB);
-pub const SURFACE_PRESSED: u32 = rgb(0xE2, 0xE7, 0xF4);
-pub const DISABLED_FILL: u32 = rgb(0xD8, 0xDD, 0xE8);
-pub const BORDER: u32 = rgb(0xC9, 0xD1, 0xE0);
-pub const BORDER_STRONG: u32 = rgb(0x9A, 0xA6, 0xBE);
-pub const BORDER_DIM: u32 = rgb(0xE2, 0xE6, 0xEE);
-pub const FOCUS: u32 = rgb(0x7A, 0x9B, 0xE8);
-pub const ACCENT_DARK: u32 = rgb(0x21, 0x44, 0xA6);
-pub const PANEL: u32 = rgb(0xF3, 0xF5, 0xF9);
-pub const TRACK: u32 = rgb(0xDD, 0xE2, 0xEA);
-pub const TEXT_DIM: u32 = rgb(0x5A, 0x62, 0x70);
+pub const SURFACE_HOVER: u32 = rgb(0xF1, 0xF3, 0xFF);
+pub const SURFACE_PRESSED: u32 = rgb(0xE4, 0xE7, 0xFB);
+pub const DISABLED_FILL: u32 = rgb(0xE6, 0xE9, 0xF0);
+pub const BORDER: u32 = rgb(0xCD, 0xD3, 0xE0);
+pub const BORDER_STRONG: u32 = rgb(0x94, 0x9C, 0xB4);
+pub const BORDER_DIM: u32 = rgb(0xE6, 0xE9, 0xEF);
+pub const FOCUS: u32 = rgb(0x8B, 0x84, 0xF0);
+pub const ACCENT_DARK: u32 = rgb(0x31, 0x2A, 0x8C);
+/// Very light accent tint: the fill of a selected scope card.
+pub const ACCENT_SOFT: u32 = rgb(0xEE, 0xEE, 0xFF);
+pub const PANEL: u32 = rgb(0xF5, 0xF6, 0xFA);
+pub const TRACK: u32 = rgb(0xE2, 0xE5, 0xEE);
+pub const TEXT_DIM: u32 = rgb(0x64, 0x6B, 0x7D);
 pub const TEXT_BRIGHT: u32 = rgb(0xFF, 0xFF, 0xFF);
 pub const LOG_BG: u32 = rgb(0xFA, 0xFB, 0xFD);
-pub const TEXT: u32 = rgb(0x1F, 0x24, 0x2E);
+pub const TEXT: u32 = rgb(0x14, 0x1B, 0x2E);
+/// A muted teal used for the "Recommended" tag on the just-me card.
+pub const TAG_BG: u32 = rgb(0xDC, 0xF3, 0xE9);
+pub const TAG_TEXT: u32 = rgb(0x0F, 0x7A, 0x52);
 
 /// Create a font handle, or `None` when GDI is unavailable.
 ///
@@ -281,6 +289,15 @@ pub const DT_NOPREFIX: u32 = 0x0000_0800;
 pub fn round_rect(hdc: HDC, l: i32, t: i32, r: i32, b: i32, w: i32, h: i32) -> i32 {
     match gdi().round_rect {
         Some(f) => unsafe { f(hdc, l, t, r, b, w, h) },
+        None => 0,
+    }
+}
+
+/// Draw a filled ellipse (used for radio-button dots) with the currently
+/// selected brush.
+pub fn ellipse(hdc: HDC, l: i32, t: i32, r: i32, b: i32) -> i32 {
+    match gdi().ellipse {
+        Some(f) => unsafe { f(hdc, l, t, r, b) },
         None => 0,
     }
 }
