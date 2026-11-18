@@ -1,0 +1,15 @@
+# The gnullvm toolchain links libunwind.dll and the UCRT dynamically by
+# default. That is fine on a development machine with the Rust toolchain
+# installed, but both binaries we ship must be single-file self-contained:
+#   * spass-setup.exe is downloaded on its own and double-clicked - a missing
+#     libunwind.dll produces "the code execution cannot proceed because
+#     libunwind.dll was not found" before main runs.
+#   * spass.exe is embedded in the installer and written to a directory that
+#     has no Rust toolchain, so it must not depend on that toolchain's DLL.
+#
+# Static CRT folds libunwind.a and the UCRT into each binary. The resulting
+# exe still imports only Windows system DLLs (KERNEL32, USER32, ntdll,
+# WS2_32, bcryptprimitives and the api-ms-win-* forwarders that ship with
+# every Windows 10/11).
+[target.x86_64-pc-windows-gnullvm]
+rustflags = ["-C", "target-feature=+crt-static"]
