@@ -20,12 +20,17 @@ on this machine and fills in its real location (any drive, e.g. `D:\Tools\Spass`
 
 - **Not installed** — the main button reads **Install**. Choose **Just me** or
   **All users**, review the location, tick the options, and press Install.
-- **Already installed** — the main button reads **Uninstall**, the detected
-  folder is filled in, and switching the scope cards shows that scope's install
-  if there is one.
+- **Installed correctly** — the main button reads **Uninstall**.
+- **Installed but incomplete** — a missing `spass.exe`, an outdated version,
+  or a partial registry entry makes the main button read **Repair**. Pressing
+  it completes the install in place at the detected location (any drive),
+  without touching anything else. The status line says what was missing.
 
 You can install to any folder, including another drive; edit the location
-box before pressing Install.
+box before pressing Install. For your safety the installer **refuses** to
+install into a source tree (a folder containing `.git` or `Cargo.toml`) or
+into the current folder / its parents — choose a dedicated folder such as
+`D:\Spass`.
 
 - **Just me** (default) installs to `%LOCALAPPDATA%\Programs\Spass`, adds that
   folder to your user `PATH`, and needs no administrator rights.

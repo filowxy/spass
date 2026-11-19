@@ -491,9 +491,9 @@ struct Ui {
     scope_machine: HWND,
     /// Installation scope chosen in the window. Mirrors the two radio cards.
     scope: Scope,
-    /// The install detected in the registry for the current scope, if any.
-    /// Drives the primary button's label and action ("Install" vs "Uninstall").
-    installed: Option<crate::installed::Found>,
+    /// Health of the install in the current scope. Drives the primary
+    /// button's label and action: Install / Uninstall / Repair.
+    health: crate::installed::Health,
     /// Inherited from the command line: true when this process is already
     /// elevated and must not ask for UAC again.
     elevated: bool,
@@ -555,27 +555,62 @@ impl Ui {
         }
     }
 
-    /// Re-read the registry for the current scope and make the primary
-    /// button do the obvious thing: install when Spass is absent, uninstall
-    /// when it is present. Also reflects the detected location in the status.
+    /// Re-read the registry and files for the current scope, then make the
+    /// primary button do the obvious thing:
+    ///   * nothing there          -> Install
+    ///   * complete and current   -> Uninstall
+    ///   * partial / stale / broken -> Repair (complete it in place)
     unsafe fn refresh_action(&mut self) {
-        self.installed = crate::installed::detect_scope(self.scope);
-        let here = get_text(self.path);
-        let path_dir = PathBuf::from(here.trim());
-        // An install counts as "present" either from the registry row or from
-        // an spass.exe sitting in the directory the box currently points at.
-        let present = self.installed.is_some() || path_dir.join("spass.exe").exists();
-        set_text(self.btn_install, if present { "Uninstall" } else { "Install" });
-        EnableWindow(self.btn_uninstall, if present { TRUE_ } else { FALSE_ });
-        if present {
-            let where_ = self
-                .installed
-                .as_ref()
-                .map(|f| f.dir.display().to_string())
-                .unwrap_or_else(|| path_dir.display().to_string());
-            self.status(&format!("Spass is installed at {}", where_));
+        let health = crate::installed::status(self.scope, crate::VERSION);
+        // A binary sitting in the directory the box points at also counts as
+        // a repair candidate even if the registry row was never written.
+        let here = PathBuf::from(get_text(self.path).trim().to_string());
+        if matches!(health, crate::installed::Health::Absent) && here.join("spass.exe").exists() {
+            self.health = crate::installed::Health::NeedsRepair {
+                dir: here.clone(),
+                scope: self.scope,
+                reason: "spass.exe found but not registered".into(),
+            };
         } else {
-            self.status("Not installed. Choose a location and press Install.");
+            self.health = health;
+        }
+
+        match &self.health {
+            crate::installed::Health::Absent => {
+                set_text(self.btn_install, "Install");
+                EnableWindow(self.btn_uninstall, FALSE_);
+                self.status("Not installed. Choose a location and press Install.");
+            }
+            crate::installed::Health::Healthy => {
+                set_text(self.btn_install, "Uninstall");
+                EnableWindow(self.btn_uninstall, TRUE_);
+                let dir = crate::installed::detect_scope(self.scope)
+                    .map(|f| f.dir.display().to_string())
+                    .unwrap_or_else(|| get_text(self.path));
+                self.status(&format!("Spass is installed at {}", dir));
+            }
+            crate::installed::Health::NeedsRepair { dir, reason, .. } => {
+                set_text(self.btn_install, "Repair");
+                EnableWindow(self.btn_uninstall, TRUE_);
+                self.status(&format!("Repair needed at {}: {}", dir.display(), reason));
+            }
+        }
+
+        // Keep the path box on the real install location for repair/uninstall
+        // so the action targets the right directory, including other drives.
+        // For a repair this must come from the diagnostic's `dir`, not from
+        // detect_scope(), which returns None precisely when the binary is
+        // missing - the case we are trying to repair.
+        match &self.health {
+            crate::installed::Health::Absent => {}
+            crate::installed::Health::Healthy => {
+                if let Some(loc) = crate::installed::detect_scope(self.scope) {
+                    set_text(self.path, &loc.dir.display().to_string());
+                }
+            }
+            crate::installed::Health::NeedsRepair { dir, .. } => {
+                set_text(self.path, &dir.display().to_string());
+            }
         }
     }
 
@@ -1072,13 +1107,12 @@ unsafe extern "system" fn wnd_proc(
             match id {
                 ID_INSTALL => {
                     if let Some(ui) = Ui::from_hwnd(hwnd) {
-                        // Auto-detected action: uninstall if Spass is present
-                        // at the chosen location, otherwise install.
-                        let dir = PathBuf::from(get_text(ui.path).trim().to_string());
-                        if ui.installed.is_some() || dir.join("spass.exe").exists() {
-                            do_uninstall(ui);
-                        } else {
-                            do_install(ui);
+                        // Absent -> install, healthy -> uninstall, partial ->
+                        // repair (a fresh install in place completes it).
+                        match ui.health {
+                            crate::installed::Health::Healthy => do_uninstall(ui),
+                            crate::installed::Health::Absent
+                            | crate::installed::Health::NeedsRepair { .. } => do_install(ui),
                         }
                     }
                 }
@@ -1285,11 +1319,29 @@ unsafe extern "system" fn wnd_proc(
 
 /// Read the current form values into an `Opts`.
 unsafe fn read_opts(ui: &Ui) -> crate::Opts {
-    let dir = get_text(ui.path);
-    let dir = if dir.trim().is_empty() {
-        crate::default_install_dir()
-    } else {
-        std::path::PathBuf::from(dir.trim())
+    // The diagnosed location is authoritative for an existing install (repair
+    // or uninstall): the path box may still show a scope default in the brief
+    // window before UI updates settle, and acting on it would target the
+    // wrong directory - possibly a source tree. Only a fresh install takes
+    // the path straight from the box.
+    let dir = match &ui.health {
+        crate::installed::Health::Healthy | crate::installed::Health::NeedsRepair { .. } => {
+            crate::installed::detect_scope(ui.scope)
+                .map(|f| f.dir)
+                .or_else(|| match &ui.health {
+                    crate::installed::Health::NeedsRepair { dir, .. } => Some(dir.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| PathBuf::from(get_text(ui.path).trim().to_string()))
+        }
+        crate::installed::Health::Absent => {
+            let typed = get_text(ui.path);
+            if typed.trim().is_empty() {
+                crate::default_install_dir()
+            } else {
+                PathBuf::from(typed.trim())
+            }
+        }
     };
     let add_path = SendMessageW(ui.chk_path, BM_GETCHECK, 0, 0) == BST_CHECKED_L;
     let install_rust = SendMessageW(ui.chk_rust, BM_GETCHECK, 0, 0) == BST_CHECKED_L;
@@ -1870,7 +1922,7 @@ pub fn run(opts: &crate::Opts, reporter: Arc<GuiReporter>) -> i32 {
             hwnd, log, status,
             btn_install, btn_uninstall, path, chk_path, chk_rust,
             scope_user, scope_machine, scope: opts.scope,
-            installed: crate::installed::detect_scope(opts.scope),
+            health: crate::installed::status(opts.scope, crate::VERSION),
             elevated: opts.elevated, autostart: opts.autostart,
             busy: false,
             progress: 0.0,
