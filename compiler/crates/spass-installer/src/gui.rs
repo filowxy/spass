@@ -175,14 +175,29 @@ mod drawitem_layout_tests {
     }
 }
 
-/// `ODS_*` flags carried in `DRAWITEMSTRUCT::itemState`.
-const ODS_FOCUS: u32 = 0x0000_0001;
-const ODS_SELECTED: u32 = 0x0000_0002;
+/// `ODS_*` flags carried in `DRAWITEMSTRUCT::itemState` (Winuser.h).
+const ODS_FOCUS: u32 = 0x0000_0010;
+const ODS_SELECTED: u32 = 0x0000_0001;
 const ODS_DISABLED: u32 = 0x0000_0004;
-const ODS_HOTLIGHT: u32 = 0x0000_0020;
-/// `DRAWITEMSTRUCT::hltype` for a button, which is the only owner-drawn
-/// control in this window.
-const ODT_BUTTON: u32 = 1;
+const ODS_HOTLIGHT: u32 = 0x0000_0040;
+/// `DRAWITEMSTRUCT::CtlType` for a button (Winuser.h: ODT_BUTTON == 4).
+/// This was wrongly 1 (ODT_MENU), which made the owner-draw branch never run
+/// and left every button as a flat system-grey square.
+const ODT_BUTTON: u32 = 4;
+
+#[cfg(test)]
+mod win32_constant_tests {
+    use super::*;
+
+    #[test]
+    fn owner_draw_constants_match_winuser_h() {
+        assert_eq!(ODT_BUTTON, 4, "ODT_BUTTON must be 4, not ODT_MENU(1)");
+        assert_eq!(ODS_SELECTED, 0x0001);
+        assert_eq!(ODS_DISABLED, 0x0004);
+        assert_eq!(ODS_HOTLIGHT, 0x0040);
+        assert_eq!(BS_OWNERDRAW, 0x0000000B);
+    }
+}
 
 /// `TME_LEAVE`
 const TME_LEAVE: u32 = 0x0000_0002;
@@ -511,6 +526,7 @@ struct Ui {
 /// `SendMessage` from inside `WM_DRAWITEM` back to the child that is
 /// currently being created is a deadlock, and asking a button for its own
 /// text is exactly that shape of mistake.
+#[derive(Clone)]
 struct BtnBox {
     id: isize,
     rect: RECT,
@@ -1099,7 +1115,13 @@ unsafe extern "system" fn wnd_proc(
                         if b.hovered {
                             state |= ODS_HOTLIGHT;
                         }
-                        draw_button(dis.hdc, btn_art(), b, state);
+                        // Always paint into the rectangle the system hands
+                        // us. The cached one was computed before the window
+                        // was shown, when child screen coordinates were not
+                        // final, and using it draws the button off-screen.
+                        let mut box_now = b.clone();
+                        box_now.rect = dis.rc_item;
+                        draw_button(dis.hdc, btn_art(), &box_now, state);
                     }
                 }
             }
@@ -1824,6 +1846,20 @@ pub fn run(opts: &crate::Opts, reporter: Arc<GuiReporter>) -> i32 {
         // paints the banner and the empty groove. A second BeginPaint here
         // would be a second, non-existent update region.
         UpdateWindow(hwnd);
+
+        // Owner-drawn children sent WM_DRAWITEM during CreateWindowExW, long
+        // before GWLP_USERDATA existed, so that first paint was discarded.
+        // Windows does not repaint an owner-draw button on its own unless it
+        // is invalidated, so force one now that the window is visible and the
+        // Ui is reachable. Without this every button stays a flat grey square.
+        for id in [ID_ADDPATH, ID_RUST, ID_DEFAULT, ID_INSTALL, ID_UNINSTALL, ID_CLOSE,
+                   ID_SCOPE_USER, ID_SCOPE_MACHINE] {
+            let h = GetDlgItem(hwnd, id as c_int);
+            if h != 0 {
+                InvalidateRect(h, std::ptr::null(), TRUE_);
+                UpdateWindow(h);
+            }
+        }
 
         // The elevated relaunch hands its choices back through the command
         // line and asks us to begin without a second click.
