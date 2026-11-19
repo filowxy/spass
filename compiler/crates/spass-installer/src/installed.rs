@@ -187,6 +187,53 @@ pub fn detect() -> Option<Found> {
     None
 }
 
+/// How healthy an existing installation is. The GUI uses this to decide
+/// whether the primary button should say Install, Uninstall, or Repair.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Health {
+    /// No trace of Spass in this scope.
+    Absent,
+    /// Binary and every registry value present and current.
+    Healthy,
+    /// Something is there but incomplete: a missing binary, a stale version,
+    /// or a partial registry entry. Installation can be completed in place.
+    NeedsRepair { dir: PathBuf, scope: Scope, reason: String },
+}
+
+/// Diagnose the install in one scope without changing anything.
+///
+/// A row in Apps & features with no `spass.exe`, or a binary whose install was
+/// interrupted before the registry was written, is a repair candidate - not
+/// a fresh install and not an uninstall. The returned `dir` is the best guess
+/// of where the install belongs, taken from the registry or the scope default.
+pub fn status(scope: Scope, current_version: &str) -> Health {
+    let logged = read_named(scope, "InstallLocation");
+    let binary = logged.as_ref().map(PathBuf::from).unwrap_or_else(|| scope.default_dir());
+    let has_binary = binary.join("spass.exe").exists();
+    let version = read_named(scope, "DisplayVersion");
+    let has_uninstaller = binary.join("spass-uninstall.exe").exists();
+    let has_command = read_named(scope, "UninstallString").is_some();
+
+    match (logged, has_binary, version, has_command, has_uninstaller) {
+        (None, false, _, _, _) => Health::Absent,
+        (loc, true, Some(v), true, true) if v == current_version => {
+            // Fully registered and up to date.
+            let _ = loc;
+            Health::Healthy
+        }
+        (loc, true, _, _, _) => Health::NeedsRepair {
+            dir: loc.map(PathBuf::from).unwrap_or(binary),
+            scope,
+            reason: "registration incomplete or version differs".into(),
+        },
+        (loc, false, _, _, _) => Health::NeedsRepair {
+            dir: loc.map(PathBuf::from).unwrap_or(binary),
+            scope,
+            reason: "spass.exe is missing".into(),
+        },
+    }
+}
+
 /// Remove the uninstall entry. A leftover key with no files would otherwise
 /// leave a broken "Spass" row in Apps & features forever.
 #[cfg(windows)]
@@ -223,5 +270,34 @@ mod tests {
     fn uninstall_key_is_under_current_version() {
         assert!(UNINSTALL_KEY.contains(r"CurrentVersion\Uninstall"));
         assert!(UNINSTALL_KEY.ends_with("Spass"));
+    }
+
+    #[test]
+    fn health_distinguishes_three_states() {
+        // These assertions hold on a machine with no Spass installed. On a
+        // machine that does have it, the exact variant depends on its state,
+        // but it must always be one of the three and never panic.
+        let h = status(Scope::User, "0.1.0");
+        assert!(matches!(
+            h,
+            Health::Absent | Health::Healthy | Health::NeedsRepair { .. }
+        ));
+    }
+
+    #[test]
+    fn needs_repair_carries_a_directory_and_reason() {
+        let h = Health::NeedsRepair {
+            dir: PathBuf::from(r"D:\Spass"),
+            scope: Scope::User,
+            reason: "spass.exe is missing".into(),
+        };
+        match h {
+            Health::NeedsRepair { dir, scope, reason } => {
+                assert_eq!(dir, PathBuf::from(r"D:\Spass"));
+                assert_eq!(scope, Scope::User);
+                assert!(!reason.is_empty());
+            }
+            _ => panic!("expected NeedsRepair"),
+        }
     }
 }

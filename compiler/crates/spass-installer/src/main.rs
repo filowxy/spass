@@ -517,8 +517,73 @@ fn kill_daemons() {
         .status();
 }
 
+/// Reject install targets that must never be wiped. `run_install` clears the
+/// target directory before copying in the payload, so a typo or a repair
+/// aimed at a source tree would delete everything in it. This guard makes
+/// that class of mistake impossible.
+fn guard_install_dir(dir: &Path) -> Result<(), String> {
+    // A source checkout: git metadata or a Cargo manifest at the top level.
+    for marker in [".git", "Cargo.toml", ".workbuddy"] {
+        if dir.join(marker).exists() {
+            return Err(format!("looks like a source tree (contains `{}`)", marker));
+        }
+    }
+    // The current directory or any of its ancestors: clearing it would delete
+    // whatever the caller is working in. Compare canonicalized absolute paths
+    // case-insensitively (Windows paths are case-insensitive).
+    let cwd = env::current_dir().unwrap_or_default();
+    let target = if dir.is_absolute() {
+        dir.to_path_buf()
+    } else {
+        cwd.join(dir)
+    };
+    let norm = |p: &Path| {
+        p.components()
+            .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+            .collect::<Vec<_>>()
+    };
+    let t = norm(&target);
+    let c = norm(&cwd);
+    if t.is_empty() || (t.len() <= c.len() && c.starts_with(&t)) {
+        return Err("it is the current directory or one of its parents".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod install_dir_guard_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_source_tree_markers() {
+        let base = env::temp_dir().join(format!("spass_guard_{}", std::process::id()));
+        let _ = fs::create_dir_all(base.join(".git"));
+        assert!(guard_install_dir(&base).is_err(), "a .git dir must be refused");
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn accepts_a_plain_dedicated_folder() {
+        let base = env::temp_dir().join(format!("spass_plain_{}", std::process::id()));
+        let _ = fs::create_dir_all(&base);
+        // A bare temp path is neither a source tree nor the cwd.
+        assert!(guard_install_dir(&base).is_ok());
+        let _ = fs::remove_dir_all(&base);
+    }
+}
+
 fn run_install(o: &Opts) -> i32 {
     step("Installing Spass");
+
+    // Never wipe a directory that is a source checkout, the current working
+    // directory, or an ancestor of either. Clearing the target is how a stale
+    // install gets replaced, but pointing it at a project (or ".") would
+    // destroy the user's files. Refuse with a clear message instead.
+    if let Err(reason) = guard_install_dir(&o.install_dir) {
+        error(&format!("refusing to install into {}: {}", o.install_dir.display(), reason));
+        note("Choose a dedicated install folder, e.g. D:\\Spass, not a source tree.");
+        return 1;
+    }
 
     if o.install_dir.join("spass.exe").exists()
         && !confirm(o, &format!("    Overwrite the existing install at {}? [y/N] ", o.install_dir.display()))
