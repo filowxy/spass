@@ -1,6 +1,7 @@
 //! Implements the installer's native Win32 GUI.
 
 use std::ffi::c_void;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::os::raw::c_int;
 use std::sync::{Arc, Mutex};
@@ -490,6 +491,9 @@ struct Ui {
     scope_machine: HWND,
     /// Installation scope chosen in the window. Mirrors the two radio cards.
     scope: Scope,
+    /// The install detected in the registry for the current scope, if any.
+    /// Drives the primary button's label and action ("Install" vs "Uninstall").
+    installed: Option<crate::installed::Found>,
     /// Inherited from the command line: true when this process is already
     /// elevated and must not ask for UAC again.
     elevated: bool,
@@ -548,6 +552,30 @@ impl Ui {
             None
         } else {
             Some(&mut *(p as *mut Ui))
+        }
+    }
+
+    /// Re-read the registry for the current scope and make the primary
+    /// button do the obvious thing: install when Spass is absent, uninstall
+    /// when it is present. Also reflects the detected location in the status.
+    unsafe fn refresh_action(&mut self) {
+        self.installed = crate::installed::detect_scope(self.scope);
+        let here = get_text(self.path);
+        let path_dir = PathBuf::from(here.trim());
+        // An install counts as "present" either from the registry row or from
+        // an spass.exe sitting in the directory the box currently points at.
+        let present = self.installed.is_some() || path_dir.join("spass.exe").exists();
+        set_text(self.btn_install, if present { "Uninstall" } else { "Install" });
+        EnableWindow(self.btn_uninstall, if present { TRUE_ } else { FALSE_ });
+        if present {
+            let where_ = self
+                .installed
+                .as_ref()
+                .map(|f| f.dir.display().to_string())
+                .unwrap_or_else(|| path_dir.display().to_string());
+            self.status(&format!("Spass is installed at {}", where_));
+        } else {
+            self.status("Not installed. Choose a location and press Install.");
         }
     }
 
@@ -1044,7 +1072,14 @@ unsafe extern "system" fn wnd_proc(
             match id {
                 ID_INSTALL => {
                     if let Some(ui) = Ui::from_hwnd(hwnd) {
-                        do_install(ui);
+                        // Auto-detected action: uninstall if Spass is present
+                        // at the chosen location, otherwise install.
+                        let dir = PathBuf::from(get_text(ui.path).trim().to_string());
+                        if ui.installed.is_some() || dir.join("spass.exe").exists() {
+                            do_uninstall(ui);
+                        } else {
+                            do_install(ui);
+                        }
                     }
                 }
                 ID_UNINSTALL => {
@@ -1191,11 +1226,14 @@ unsafe extern "system" fn wnd_proc(
             if let Some(ui) = Ui::from_hwnd(hwnd) {
                 ui.set_busy(false);
                 ui.set_progress(if code == 0 { 1.0 } else { 0.0 });
-                ui.status(if code == 0 {
-                    "Done."
+                if code == 0 {
+                    // Install/uninstall just changed what is present: let the
+                    // primary button flip to the new obvious action.
+                    ui.refresh_action();
+                    ui.status("Done.");
                 } else {
-                    "Finished with errors - see the log."
-                });
+                    ui.status("Finished with errors - see the log.");
+                }
             }
             0
         }
@@ -1257,6 +1295,7 @@ unsafe fn read_opts(ui: &Ui) -> crate::Opts {
     let install_rust = SendMessageW(ui.chk_rust, BM_GETCHECK, 0, 0) == BST_CHECKED_L;
     crate::Opts {
         install_dir: dir,
+        explicit_dir: true, // the path box is authoritative in the GUI
         add_to_path: add_path,
         uninstall: false,
         // The GUI asks its own questions up front, so the worker must never
@@ -1292,10 +1331,16 @@ unsafe fn select_scope(ui: &mut Ui, scope: Scope) {
     let current = get_text(ui.path);
     let user_default = Scope::User.default_dir().display().to_string();
     let machine_default = Scope::Machine.default_dir().display().to_string();
-    let next_default = scope.default_dir().display().to_string();
-    if current.trim() == user_default || current.trim() == machine_default {
-        set_text(ui.path, &next_default);
-    }
+    // Switching scope prefers that scope's actual installed location, then
+    // its default; a hand-typed custom path (neither known value) is kept.
+    let next = match crate::installed::detect_scope(scope) {
+        Some(found) => found.dir.display().to_string(),
+        None if current.trim() == user_default || current.trim() == machine_default => {
+            scope.default_dir().display().to_string()
+        }
+        None => current,
+    };
+    set_text(ui.path, &next);
     let note = GetDlgItem(ui.hwnd, ID_SCOPE_NOTE as c_int);
     if note != 0 {
         set_text(note, if scope == Scope::Machine {
@@ -1304,11 +1349,7 @@ unsafe fn select_scope(ui: &mut Ui, scope: Scope) {
             "Installed for your account only. No administrator rights needed."
         });
     }
-    ui.status(if scope == Scope::Machine {
-        "All users: writes to Program Files and the system PATH (admin required)."
-    } else {
-        "Just me: writes to your user profile and user PATH."
-    });
+    ui.refresh_action();
 }
 
 /// Spawn the install on a worker thread and return immediately.
@@ -1474,6 +1515,18 @@ const WS_CLIPCHILDREN: u32 = 0x0200_0000;
 /// Build the window and run the message loop. Returns a process exit code.
 pub fn run(opts: &crate::Opts, reporter: Arc<GuiReporter>) -> i32 {
     unsafe {
+        // Auto-detect an existing install so a bare double-click opens ready
+        // to uninstall, with the real location (which may be on D:) filled in.
+        // An elevated autostart already carries its own explicit choices.
+        let mut effective = opts.clone();
+        if !opts.explicit_dir && !opts.autostart {
+            if let Some(found) = crate::installed::detect() {
+                effective.scope = found.scope;
+                effective.install_dir = found.dir;
+            }
+        }
+        let opts = &effective;
+
         // The installer is a console-subsystem binary so the CLI works from a
         // terminal. A double-click would otherwise leave an empty console
         // window behind the GUI; detach it now that we know we are windowed.
@@ -1817,6 +1870,7 @@ pub fn run(opts: &crate::Opts, reporter: Arc<GuiReporter>) -> i32 {
             hwnd, log, status,
             btn_install, btn_uninstall, path, chk_path, chk_rust,
             scope_user, scope_machine, scope: opts.scope,
+            installed: crate::installed::detect_scope(opts.scope),
             elevated: opts.elevated, autostart: opts.autostart,
             busy: false,
             progress: 0.0,
@@ -1850,6 +1904,12 @@ pub fn run(opts: &crate::Opts, reporter: Arc<GuiReporter>) -> i32 {
                 InvalidateRect(h, std::ptr::null(), TRUE_);
                 UpdateWindow(h);
             }
+        }
+
+        // Make the primary button say "Install" or "Uninstall" according to
+        // what we found, and fill the status line with the detected location.
+        if let Some(ui) = Ui::from_hwnd(hwnd) {
+            ui.refresh_action();
         }
 
         // The elevated relaunch hands its choices back through the command

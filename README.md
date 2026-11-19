@@ -18,7 +18,7 @@ call through a runner, or load in-process as a shared library.
 
 Download from the [latest release](https://github.com/filowxy/spass/releases/latest):
 
-- `spass-setup.exe` — self-contained installer; choose just-me or all-users in the window.
+- `spass-setup.exe` — self-contained installer; auto-detects install vs uninstall, any drive, registers in Apps & features.
 - `spass-0.1.0-x64.msi` — per-machine Windows Installer package, scriptable with `msiexec`.
 
 ## Documentation
