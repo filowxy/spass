@@ -92,6 +92,7 @@ const WS_VISIBLE: u32 = 0x1000_0000;
 const WS_CHILD: u32 = 0x4000_0000;
 const WS_BORDER: u32 = 0x0080_0000;
 const WS_TABSTOP: u32 = 0x0001_0000;
+const WS_GROUP: u32 = 0x0002_0000;
 const WS_VSCROLL: u32 = 0x0020_0000;
 const WS_OVERLAPPEDWINDOW: u32 = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
 
@@ -101,11 +102,13 @@ const BS_DEFPUSHBUTTON: u32 = 0x0000_0001;
 /// Mask that isolates the button *type* from the rest of the `BS_*` state.
 const BS_TYPEMASK: u32 = 0x0000_000F;
 const BS_AUTOCHECKBOX: u32 = 0x0000_0003;
-/// The window draws nothing itself and asks the owner via `WM_DRAWITEM`.
-const BS_OWNERDRAW: u32 = 0x0000_000B;
-/// `BS_OWNERDRAW` for a checkbox: still auto-toggles and still reports
-/// `BN_CLICKED`, but the owner supplies the pixels.
-const BS_OWNERDRAWFIXED: u32 = 0x0000_000C;
+// Standard button styles. All controls are drawn by Windows itself: an
+// owner-drawn approach was tried and repeatedly broke (wrong DRAWITEMSTRUCT
+// layout, wrong ODT_* value, wrong font pointer), leaving blank grey boxes.
+// Native controls cannot fail to paint.
+const BS_PUSHBUTTON_N: u32 = 0x0000_0000;
+const BS_AUTOCHECKBOX_N: u32 = 0x0000_0003;
+const BS_AUTORADIOBUTTON_N: u32 = 0x0000_0009;
 const ES_MULTILINE: u32 = 0x0004;
 const ES_AUTOVSCROLL: u32 = 0x0040;
 const ES_READONLY: u32 = 0x0800;
@@ -184,20 +187,6 @@ const ODS_HOTLIGHT: u32 = 0x0000_0040;
 /// This was wrongly 1 (ODT_MENU), which made the owner-draw branch never run
 /// and left every button as a flat system-grey square.
 const ODT_BUTTON: u32 = 4;
-
-#[cfg(test)]
-mod win32_constant_tests {
-    use super::*;
-
-    #[test]
-    fn owner_draw_constants_match_winuser_h() {
-        assert_eq!(ODT_BUTTON, 4, "ODT_BUTTON must be 4, not ODT_MENU(1)");
-        assert_eq!(ODS_SELECTED, 0x0001);
-        assert_eq!(ODS_DISABLED, 0x0004);
-        assert_eq!(ODS_HOTLIGHT, 0x0040);
-        assert_eq!(BS_OWNERDRAW, 0x0000000B);
-    }
-}
 
 /// `TME_LEAVE`
 const TME_LEAVE: u32 = 0x0000_0002;
@@ -1102,30 +1091,9 @@ unsafe extern "system" fn wnd_proc(
             0
         }
         WM_DRAWITEM => {
-            // Owner-drawn buttons. The stock control asks us for pixels and
-            // keeps every other behaviour (focus, activation, clicks); all the
-            // state comes from the parent's own copy, so nothing is sent back
-            // into the control while it may still be mid-creation.
-            let dis = &*(lparam as *const DRAWITEMSTRUCT);
-            if dis.ctl_type == ODT_BUTTON {
-                let id = dis.ctl_id as isize;
-                let mut state = dis.item_state;
-                if let Some(ui) = Ui::from_hwnd(hwnd) {
-                    if let Some(b) = ui.buttons.iter().find(|b| b.id == id) {
-                        if b.hovered {
-                            state |= ODS_HOTLIGHT;
-                        }
-                        // Always paint into the rectangle the system hands
-                        // us. The cached one was computed before the window
-                        // was shown, when child screen coordinates were not
-                        // final, and using it draws the button off-screen.
-                        let mut box_now = b.clone();
-                        box_now.rect = dis.rc_item;
-                        draw_button(dis.hdc, btn_art(), &box_now, state);
-                    }
-                }
-            }
-            1
+            // No owner-drawn controls remain: Windows paints every button,
+            // radio and checkbox itself. Ignore this message.
+            0
         }
         WM_MOUSELEAVE => {
             if let Some(ui) = Ui::from_hwnd(hwnd) {
@@ -1617,15 +1585,24 @@ pub fn run(opts: &crate::Opts, reporter: Arc<GuiReporter>) -> i32 {
         let card_y = y_scope + s(24);
         let card_h = s(58);
         let mk_card = |text: &str, x: i32, id: isize, checked: bool| {
-            let c = make_control(hwnd, "BUTTON", text, BS_OWNERDRAW | WS_TABSTOP, x, card_y, card_w, card_h, id);
+            // WS_GROUP on the first radio groups both cards so selecting one
+            // clears the other automatically.
+            let c = make_control(hwnd, "BUTTON", text, BS_AUTORADIOBUTTON_N | WS_TABSTOP | WS_GROUP, x, card_y, card_w, card_h, id);
             set_font(c, f_body);
+            theme::apply_theme(c);
             if checked {
                 SendMessageW(c, BM_SETCHECK, BST_CHECKED, 0);
             }
             c
         };
         let scope_user = mk_card("Just me", pad, ID_SCOPE_USER, opts.scope == Scope::User);
-        let scope_machine = mk_card("All users", pad + card_w + card_gap, ID_SCOPE_MACHINE, opts.scope == Scope::Machine);
+        let scope_machine = make_control(hwnd, "BUTTON", "All users", BS_AUTORADIOBUTTON_N | WS_TABSTOP,
+            pad + card_w + card_gap, card_y, card_w, card_h, ID_SCOPE_MACHINE);
+        set_font(scope_machine, f_body);
+        theme::apply_theme(scope_machine);
+        if opts.scope == Scope::Machine {
+            SendMessageW(scope_machine, BM_SETCHECK, BST_CHECKED, 0);
+        }
         lbl(
             if opts.scope == Scope::Machine {
                 "Installed for everyone on this PC. Needs administrator rights."
@@ -1661,7 +1638,7 @@ pub fn run(opts: &crate::Opts, reporter: Arc<GuiReporter>) -> i32 {
             hwnd,
             "BUTTON",
             "Reset to default",
-            BS_OWNERDRAW | WS_TABSTOP,
+            BS_PUSHBUTTON_N | WS_TABSTOP,
             pad + path_w + row_gap,
             y_loc + s(24),
             reset_w,
@@ -1669,17 +1646,18 @@ pub fn run(opts: &crate::Opts, reporter: Arc<GuiReporter>) -> i32 {
             ID_DEFAULT,
         );
         set_font(btn_default, f_body);
+        theme::apply_theme(btn_default);
 
         // ---- Options --------------------------------------------------
         let y_opt = y_loc + s(68);
         lbl("OPTIONS", pad, y_opt, s(300), s(18), ID_SECTION_OPT, f_section);
         let mk_check = |text: &str, x: i32, y: i32, w: i32, id: isize, checked: bool| {
-            let c = make_control(hwnd, "BUTTON", text, BS_OWNERDRAWFIXED | WS_TABSTOP, x, y, w, s(24), id);
+            let c = make_control(hwnd, "BUTTON", text, BS_AUTOCHECKBOX_N | WS_TABSTOP, x, y, w, s(24), id);
             set_font(c, f_body);
+            theme::apply_theme(c);
             if checked {
                 SendMessageW(c, BM_SETCHECK, BST_CHECKED, 0);
             }
-            // Owner-drawn, so no `SetWindowTheme` here either.
             c
         };
         let chk_path = mk_check(
@@ -1768,22 +1746,20 @@ pub fn run(opts: &crate::Opts, reporter: Arc<GuiReporter>) -> i32 {
 
         let bw = s(140);
         let btn_install = make_control(
-            hwnd, "BUTTON", "Install", BS_OWNERDRAW | WS_TABSTOP,
+            hwnd, "BUTTON", "Install", BS_PUSHBUTTON_N | WS_TABSTOP,
             pad, by, bw, bh, ID_INSTALL,
         );
         let btn_uninstall = make_control(
-            hwnd, "BUTTON", "Uninstall", BS_OWNERDRAW | WS_TABSTOP,
+            hwnd, "BUTTON", "Uninstall", BS_PUSHBUTTON_N | WS_TABSTOP,
             pad + bw + s(10), by, bw, bh, ID_UNINSTALL,
         );
         let btn_close = make_control(
-            hwnd, "BUTTON", "Close", BS_OWNERDRAW | WS_TABSTOP,
+            hwnd, "BUTTON", "Close", BS_PUSHBUTTON_N | WS_TABSTOP,
             pad + field_w - bw, by, bw, bh, ID_CLOSE,
         );
         for b in [btn_install, btn_uninstall, btn_close] {
             set_font(b, f_body);
-        // Deliberately *not* themed: these are owner-drawn, and asking
-        // comctl32 to render them with visual styles is what stops
-        // `WM_DRAWITEM` from ever being sent.
+            theme::apply_theme(b);
         }
 
         // Register every owner-drawn button so the parent can hit-test the
