@@ -15,9 +15,17 @@ Spass ships in two shapes:
 
 ### With `spass-setup.exe`
 
-**Double-click `spass-setup.exe`.** A window opens where you first choose
-**Just me** or **All users**, then review the install location, tick the
-options you want, and press **Install**.
+**Double-click `spass-setup.exe`.** The window checks whether Spass is already
+on this machine and fills in its real location (any drive, e.g. `D:\Tools\Spass`):
+
+- **Not installed** — the main button reads **Install**. Choose **Just me** or
+  **All users**, review the location, tick the options, and press Install.
+- **Already installed** — the main button reads **Uninstall**, the detected
+  folder is filled in, and switching the scope cards shows that scope's install
+  if there is one.
+
+You can install to any folder, including another drive; edit the location
+box before pressing Install.
 
 - **Just me** (default) installs to `%LOCALAPPDATA%\Programs\Spass`, adds that
   folder to your user `PATH`, and needs no administrator rights.
@@ -37,8 +45,16 @@ spass --version
 spass --help
 ```
 
-To remove it, open the installer again and press **Uninstall** (or run
-`spass-setup.exe --uninstall`).
+To remove it, do any of these:
+
+- Open `spass-setup.exe` again — it detects the install and the main button
+  becomes **Uninstall**.
+- Windows **Settings → Apps → Installed apps → Spass → Uninstall**. The
+  installer registers there on install, pointing at a copy kept in the
+  install folder, so uninstalling still works if you deleted the downloaded
+  setup.
+- `spass-setup.exe --uninstall` — no `--install-dir` needed; the registered
+  location is used automatically.
 
 ### With the MSI
 
@@ -71,7 +87,8 @@ interface.
 | **Also install the Rust toolchain** | On by default. `spass test` and `spass run` compile your Spass with `rustc`, so they need Rust. `spass build` does not. |
 | **Progress** | Fills during the Rust download. |
 | **Log** | Everything the installer did, including the checksum result. |
-| **Install / Uninstall / Close** | Run an action, or exit. |
+| **Install / Uninstall** | The main button switches automatically: **Install** when Spass is absent, **Uninstall** when it is detected. The explicit Uninstall button is enabled only when something is installed. |
+| **Close** | Exit. |
 
 Confirmation prompts (replacing an existing install, removing files) appear
 as normal dialog boxes. While an operation runs, the inputs are disabled and
@@ -89,7 +106,7 @@ CLI" — the window only opens on a bare double-click or with `--gui`.
 | `--scope user\|machine` | Install for just you (default) or all users; `machine` elevates automatically |
 | `--install-dir <DIR>` | Install elsewhere, e.g. `C:\Tools\Spass` |
 | `--no-path` | Install without touching `PATH` |
-| `--uninstall` | Remove the install and its `PATH` entry |
+| `--uninstall` | Remove the install and its `PATH` entry; find the location from the registry when `--install-dir` is omitted |
 | `--install-rust` | Download the official Rust installer (rustup) |
 | `--force`, `-y` | Overwrite without prompting |
 | `--silent` | Never prompt (for scripted installs) |

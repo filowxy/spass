@@ -9,6 +9,7 @@ use std::sync::Arc;
 mod assoc;
 mod elevate;
 mod gui;
+mod installed;
 mod rustup;
 mod sha256;
 mod theme;
@@ -56,8 +57,12 @@ impl Scope {
     }
 }
 
+#[derive(Clone)]
 struct Opts {
     install_dir: PathBuf,
+    /// True when --install-dir was given explicitly, so an uninstall can
+    /// fall back to the registered location instead of a guessed default.
+    explicit_dir: bool,
     add_to_path: bool,
     uninstall: bool,
     force: bool,
@@ -77,6 +82,7 @@ fn default_install_dir() -> PathBuf {
 fn parse_args() -> Result<Opts, String> {
     let mut o = Opts {
         install_dir: default_install_dir(),
+        explicit_dir: false,
         add_to_path: true,
         uninstall: false,
         force: false,
@@ -116,10 +122,12 @@ fn parse_args() -> Result<Opts, String> {
                 i += 1;
                 let v = args.get(i).ok_or("--install-dir needs a value")?;
                 o.install_dir = PathBuf::from(v);
+                o.explicit_dir = true;
             }
             other => {
                 if let Some(v) = other.strip_prefix("--install-dir=") {
                     o.install_dir = PathBuf::from(v);
+                    o.explicit_dir = true;
                 } else if let Some(v) = other.strip_prefix("--scope=") {
                     o.scope = parse_scope(v)?;
                 } else {
@@ -129,10 +137,15 @@ fn parse_args() -> Result<Opts, String> {
         }
         i += 1;
     }
-    // When no explicit directory was given, the default follows the scope.
-    // Track this by comparing against the *user* default: any other choice
-    // (including the machine default typed by hand) counts as explicit.
-    if o.scope == Scope::Machine && o.install_dir == default_install_dir() {
+    // Uninstall without an explicit directory: use wherever Spass actually
+    // registered itself (which may be on D:, not a default location).
+    if o.uninstall && !o.explicit_dir {
+        if let Some(found) = installed::detect() {
+            o.install_dir = found.dir;
+            o.scope = found.scope;
+        }
+    } else if o.scope == Scope::Machine && !o.explicit_dir {
+        // Install default follows the scope.
         o.install_dir = Scope::Machine.default_dir();
     }
     Ok(o)
@@ -195,7 +208,8 @@ fn print_help() {
          \x20                       which `spass test` and `spass run` need\n\
          \x20   --silent             No prompts; assume yes\n\
          \x20   --force, -y          Overwrite an existing install without asking\n\
-         \x20   --uninstall          Remove the installation\n\
+         \x20   --uninstall          Remove the installation (location read from\n\
+         \x20                       the registry unless --install-dir is given)\n\
          \x20   --gui                Force the window (a double-click opens it automatically)\n\
          \x20   --help, -h           Show this help\n\
          \x20   --version, -V        Show the version\n\n\
@@ -461,6 +475,13 @@ fn run_install_rust(o: &Opts) -> i32 {
 fn run_uninstall(o: &Opts) -> i32 {
     step("Uninstalling Spass");
     remove_from_path(o);
+    // Clear the Apps & features entry first: even if the files are already
+    // gone, a stale row there would keep offering a broken uninstall.
+    if installed::unregister(o.scope) {
+        ok("removed the Apps & features entry");
+    } else {
+        note("no Apps & features entry to remove");
+    }
     if !o.install_dir.exists() {
         note(&format!("nothing to remove at {}", o.install_dir.display()));
         finish("Spass is not installed.");
@@ -580,6 +601,30 @@ fn run_install(o: &Opts) -> i32 {
         ok("registered the .saple file association");
     } else {
         note("could not register the .saple file association");
+    }
+
+    // Keep a copy of ourselves in the install dir. Windows Settings launches
+    // *that* copy for "Uninstall", so removal still works when the originally
+    // downloaded setup.exe has been deleted - wherever the install lives.
+    let uninstaller = o.install_dir.join("spass-uninstall.exe");
+    match env::current_exe() {
+        Ok(me) => match fs::copy(&me, &uninstaller) {
+            Ok(_) => ok("spass-uninstall.exe"),
+            Err(e) => note(&format!("could not place the uninstaller: {}", e)),
+        },
+        Err(e) => note(&format!("could not locate this executable: {}", e)),
+    }
+
+    // Register in Apps & features so the install shows up with an Uninstall
+    // button, including installs on a non-system drive such as D:.
+    if installed::register(&installed::InstallEntry {
+        dir: &o.install_dir,
+        version: VERSION,
+        scope: o.scope,
+    }) {
+        ok("registered in Apps & features");
+    } else {
+        note("could not register in Apps & features");
     }
 
     plain("");
@@ -705,6 +750,7 @@ pub(crate) const KEY_SET_VALUE: u32 = 0x0002;
 pub(crate) const KEY_WRITE: u32 = 0x0006;
 pub(crate) const REG_EXPAND_SZ: u32 = 2;
 pub(crate) const REG_SZ: u32 = 1;
+pub(crate) const REG_DWORD: u32 = 4;
 
 /// The registry hive and key that hold PATH for a given scope.
 fn path_hive(scope: Scope) -> (u32, &'static str) {
