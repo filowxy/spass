@@ -112,9 +112,11 @@ const BS_AUTORADIOBUTTON_N: u32 = 0x0000_0009;
 const ES_MULTILINE: u32 = 0x0004;
 const ES_AUTOVSCROLL: u32 = 0x0040;
 const ES_READONLY: u32 = 0x0800;
+// Static control styles (Winuser.h). Getting these wrong changes the
+// control's size and position, not just its text layout.
 const SS_LEFT: u32 = 0x0000_0000;
-const SS_ENDELLIPSIS: u32 = 0x2000_0000;
-const SS_SUNKEN: u32 = 0x0000_0003;
+const SS_ENDELLIPSIS: u32 = 0x0000_4000;
+const SS_SUNKEN: u32 = 0x0000_1000;
 const SS_CENTERIMAGE: u32 = 0x0000_0200;
 
 // Edit / button messages
@@ -190,6 +192,19 @@ const ODT_BUTTON: u32 = 4;
 
 /// `TME_LEAVE`
 const TME_LEAVE: u32 = 0x0000_0002;
+
+#[cfg(test)]
+mod static_style_tests {
+    use super::*;
+
+    #[test]
+    fn static_styles_match_winuser_h() {
+        assert_eq!(SS_LEFT, 0x0000);
+        assert_eq!(SS_CENTERIMAGE, 0x0200);
+        assert_eq!(SS_SUNKEN, 0x1000);
+        assert_eq!(SS_ENDELLIPSIS, 0x4000);
+    }
+}
 
 const WM_DRAWITEM: u32 = 0x02B1;
 const WM_MOUSEMOVE: u32 = 0x0200;
