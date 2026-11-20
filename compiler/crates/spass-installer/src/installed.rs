@@ -16,12 +16,22 @@ const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstal
 const DISPLAY_NAME: &str = "Spass — spatial language toolchain";
 const PUBLISHER: &str = "Spass";
 
-/// Values written for the install at `dir`. The uninstaller copy lives next
-/// to spass.exe so removing the app never depends on the downloaded setup.
+/// Which executable Windows should run to uninstall.
+pub enum Uninstaller<'a> {
+    /// A normal install copies setup.exe into the install dir; use that copy.
+    Bundled,
+    /// Registry-only registration: no files were copied, so point at the
+    /// setup.exe that is performing the registration (wherever it lives).
+    External(&'a Path),
+}
+
+/// Values written for the install at `dir`.
 pub struct InstallEntry<'a> {
     pub dir: &'a Path,
     pub version: &'a str,
     pub scope: Scope,
+    /// What the registry's UninstallString should launch.
+    pub uninstaller: Uninstaller<'a>,
 }
 
 fn hive(scope: Scope) -> u32 {
@@ -36,8 +46,11 @@ fn hive(scope: Scope) -> u32 {
 /// Quoted twice over: the value itself is a string in the registry, and the
 /// exe path inside it needs quotes because an install dir may contain spaces
 /// (and may be on any drive, e.g. `D:\Tools\Spass`).
-fn uninstall_command(dir: &Path, scope: Scope) -> String {
-    let exe = dir.join("spass-uninstall.exe");
+fn uninstall_command(dir: &Path, scope: Scope, uninstaller: &Uninstaller<'_>) -> String {
+    let exe = match uninstaller {
+        Uninstaller::Bundled => dir.join("spass-uninstall.exe"),
+        Uninstaller::External(p) => p.to_path_buf(),
+    };
     format!(
         "\"{}\" --uninstall --scope {} --install-dir \"{}\" --force --silent",
         exe.display(),
@@ -73,12 +86,13 @@ pub fn register(entry: &InstallEntry<'_>) -> bool {
         return false;
     }
 
+    let command = uninstall_command(entry.dir, entry.scope, &entry.uninstaller);
     let strings: [(&str, &str); 6] = [
         ("DisplayName", DISPLAY_NAME),
         ("DisplayVersion", entry.version),
         ("Publisher", PUBLISHER),
         ("InstallLocation", &entry.dir.display().to_string()),
-        ("UninstallString", &uninstall_command(entry.dir, entry.scope)),
+        ("UninstallString", &command),
         ("DisplayIcon", &entry.dir.join("spass.exe").display().to_string()),
     ];
     let mut ok = true;
@@ -260,7 +274,7 @@ mod tests {
     #[test]
     fn uninstall_command_uses_named_uninstaller_and_quotes_paths() {
         let dir = Path::new(r"D:\Spass Tools");
-        let cmd = uninstall_command(dir, Scope::User);
+        let cmd = uninstall_command(dir, Scope::User, &Uninstaller::Bundled);
         assert!(cmd.starts_with("\"D:\\Spass Tools\\spass-uninstall.exe\""));
         assert!(cmd.contains("--uninstall --scope user"));
         assert!(cmd.contains("--install-dir \"D:\\Spass Tools\""));
