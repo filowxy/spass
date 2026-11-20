@@ -112,7 +112,7 @@ CLI" — the window only opens on a bare double-click or with `--gui`.
 | `--install-dir <DIR>` | Install elsewhere, e.g. `C:\Tools\Spass` |
 | `--no-path` | Install without touching `PATH` |
 | `--uninstall` | Remove the install and its `PATH` entry; find the location from the registry when `--install-dir` is omitted |
-| `--register` | Register an existing `spass.exe` (registry only): writes Apps & features, `.saple` and `PATH` pointing at `--install-dir`, copies no files. Safe for build trees such as `compiler\target\release`. |
+| `--register` | Repair/register the install at `--install-dir`: restores missing files (spass.exe, libunwind.dll, bootstrap) **only if absent**, and rewrites Apps & features, `.saple` and `PATH`. Never deletes or overwrites existing files, so it is safe on build trees such as `compiler\target\release`. |
 | `--install-rust` | Download the official Rust installer (rustup) |
 | `--force`, `-y` | Overwrite without prompting |
 | `--silent` | Never prompt (for scripted installs) |

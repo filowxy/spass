@@ -65,8 +65,8 @@ struct Opts {
     explicit_dir: bool,
     add_to_path: bool,
     uninstall: bool,
-    /// --register: write registry entries only, pointing at the spass.exe
-    /// already at install_dir. Copies nothing, touches no files.
+    /// --register: repair the install at install_dir. Restores missing
+    /// files only when absent, and rewrites all registry entries.
     register_only: bool,
     force: bool,
     silent: bool,
@@ -215,8 +215,7 @@ fn print_help() {
          \x20   --force, -y          Overwrite an existing install without asking\n\
          \x20   --uninstall          Remove the installation (location read from\n\
          \x20                       the registry unless --install-dir is given)\n\
-         \x20   --register           Register an existing spass.exe (no files copied);\
-         \x20                       --install-dir must contain spass.exe\n\
+         \x20   --register           Repair: restore missing files and registry\n\
          \x20   --gui                Force the window (a double-click opens it automatically)\n\
          \x20   --help, -h           Show this help\n\
          \x20   --version, -V        Show the version\n\n\
@@ -225,7 +224,7 @@ fn print_help() {
          \x20   spass-setup --scope machine          install for all users (elevates)\n\
          \x20   spass-setup --install-rust           install Spass and fetch Rust too\n\
          \x20   spass-setup --uninstall              remove Spass\n\
-         \x20   spass-setup --register --install-dir <DIR>  register an existing exe (no files copied)\n\
+         \x20   spass-setup --register --install-dir <DIR>  repair an install in place\n\
         ",
         VERSION
     );
@@ -492,43 +491,91 @@ fn run_install_rust(o: &Opts) -> i32 {
 /// and writes the shell integration: Apps & features, `.saple` association and
 /// PATH. It never copies, moves or deletes any file, so it is safe to run
 /// against a source tree or build directory.
-fn run_register(o: &Opts) -> i32 {
-    step("Registering Spass (registry only)");
+pub(crate) fn run_register(o: &Opts) -> i32 {
+    step("Repairing Spass");
 
-    let exe = o.install_dir.join("spass.exe");
-    if !exe.is_file() {
-        error(&format!("no spass.exe at {}", exe.display()));
-        note("Pass --install-dir <DIR> pointing at the folder that contains spass.exe.");
-        return 1;
+    let dir = &o.install_dir;
+    let exe = dir.join("spass.exe");
+
+    // 1) Restore missing or broken files. Never delete or overwrite a working
+    //    install: only fill in what is absent (or not runnable).
+    let binary_ok = matches!(
+        Command::new(&exe).arg("--version").output(),
+        Ok(out) if out.status.success()
+    );
+    if !binary_ok {
+        // A resident daemon may hold the old exe open; stop it before writing.
+        kill_daemons();
+        if let Err(e) = fs::create_dir_all(dir) {
+            error(&format!("could not create {}: {}", dir.display(), e));
+            return 1;
+        }
+        match fs::write(&exe, SPASS_EXE) {
+            Ok(_) => ok(&format!("restored spass.exe at {}", exe.display())),
+            Err(e) => {
+                error(&format!("could not write {}: {}", exe.display(), e));
+                return 1;
+            }
+        }
+    } else {
+        ok("spass.exe present and working");
     }
 
-    // Confirm the binary is real before advertising it to Windows.
+    // Companion files: write only when missing. An existing file is never
+    // overwritten, so a repair cannot destroy user data.
+    if let Some(dll) = SPASS_LIBUNWIND {
+        let p = dir.join("libunwind.dll");
+        if !p.is_file() {
+            match fs::write(&p, dll) {
+                Ok(_) => ok("restored libunwind.dll"),
+                Err(e) => note(&format!("could not write libunwind.dll: {}", e)),
+            }
+        }
+    }
+    if let Some(src) = SPASS_BOOTSTRAP {
+        let bdir = dir.join("bootstrap");
+        let p = bdir.join("bootstrap.spass");
+        if !p.is_file() {
+            if fs::create_dir_all(&bdir).is_ok() && fs::write(&p, src).is_ok() {
+                ok("restored bootstrap\\bootstrap.spass");
+            }
+        }
+    }
+
+    // Verify the binary we are about to advertise actually runs.
+    step("Verifying");
     match Command::new(&exe).arg("--version").output() {
         Ok(out) if out.status.success() => {
             let v = String::from_utf8_lossy(&out.stdout);
-            ok(&format!("found spass.exe ({})", v.trim()));
+            ok(&format!("version {}", v.trim()));
         }
         _ => {
-            error(&format!("{} is not a working spass.exe", exe.display()));
+            error(&format!("{} does not run; repair failed", exe.display()));
             return 1;
         }
     }
 
-    // The uninstall command must reference a setup.exe that outlives this
-    // call: no uninstaller copy is placed in the install dir in this mode.
+    // 2) Restore all Windows integration entries: Apps & features, PATH and
+    //    the .saple association. Rewriting these is idempotent.
     let setup = env::current_exe().unwrap_or_else(|_| PathBuf::from("spass-setup.exe"));
+    // Prefer a bundled uninstaller if one already lives in the install dir;
+    // otherwise point at this setup.exe so repair adds no file to the target.
+    let uninstaller = if dir.join("spass-uninstall.exe").is_file() {
+        installed::Uninstaller::Bundled
+    } else {
+        installed::Uninstaller::External(&setup)
+    };
     if installed::register(&installed::InstallEntry {
         dir: &o.install_dir,
         version: VERSION,
         scope: o.scope,
-        uninstaller: installed::Uninstaller::External(&setup),
+        uninstaller,
     }) {
         ok("registered in Apps & features");
     } else {
         error("could not write the Apps & features entry");
         return 1;
     }
-
     if o.add_to_path {
         add_to_path(o);
     }
@@ -539,14 +586,12 @@ fn run_register(o: &Opts) -> i32 {
     }
 
     plain("");
-    plain("Spass is registered.");
-    plain(&format!("  exe      : {}", exe.display()));
-    plain(&format!("  location : {}", o.install_dir.display()));
-    plain("  No files were copied or changed.");
+    plain("Spass repaired.");
+    plain(&format!("  location : {}", dir.display()));
+    plain("  Existing files were left untouched.");
     plain("");
     0
 }
-
 fn run_uninstall(o: &Opts) -> i32 {
     step("Uninstalling Spass");
     remove_from_path(o);

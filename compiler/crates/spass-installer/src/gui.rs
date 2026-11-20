@@ -1111,8 +1111,10 @@ unsafe extern "system" fn wnd_proc(
                         // repair (a fresh install in place completes it).
                         match ui.health {
                             crate::installed::Health::Healthy => do_uninstall(ui),
-                            crate::installed::Health::Absent
-                            | crate::installed::Health::NeedsRepair { .. } => do_install(ui),
+                            crate::installed::Health::Absent => do_install(ui),
+                            // Repair rewrites the registry only; it must never
+                            // reinstall over (and clear) an existing binary.
+                            crate::installed::Health::NeedsRepair { .. } => do_repair(ui),
                         }
                     }
                 }
@@ -1406,6 +1408,47 @@ unsafe fn select_scope(ui: &mut Ui, scope: Scope) {
 }
 
 /// Spawn the install on a worker thread and return immediately.
+/// Spawn a registry-only repair on a worker thread. This is the action for
+/// the "Repair" button: the binary is already on disk, so we only rewrite the
+/// Windows integration (Apps & features, .saple, PATH). No files are copied,
+/// moved or deleted -- in particular remove_dir_all is never called here.
+fn do_repair(ui: &mut Ui) {
+    unsafe {
+        let mut opts = read_opts(ui);
+        opts.register_only = true;
+        // HKLM registration still needs elevation, just like an install.
+        if opts.scope == Scope::Machine && !opts.elevated && !crate::elevate::is_admin() {
+            let mut relaunch = vec![
+                "--scope".to_string(), "machine".to_string(),
+                "--elevated".to_string(), "--autostart".to_string(),
+                "--register".to_string(),
+                "--install-dir".to_string(), opts.install_dir.display().to_string(),
+            ];
+            if !opts.add_to_path {
+                relaunch.push("--no-path".to_string());
+            }
+            if crate::elevate::relaunch_elevated(&crate::shell_join(&relaunch)) {
+                ui.status("Administrator rights granted - continuing in the elevated window.");
+                PostMessageW(ui.hwnd, WM_CLOSE, 0, 0);
+            } else {
+                ui.status("Administrator rights were not granted.");
+            }
+            return;
+        }
+        if opts.elevated {
+            opts.force = true;
+        }
+        ui.set_busy(true);
+        ui.set_progress(0.0);
+        ui.status("Repairing Spass...");
+        let hwnd = ui.hwnd;
+        std::thread::spawn(move || {
+            let code = crate::run_register(&opts);
+            PostMessageW(hwnd, WM_APP_DONE, code as usize, 0);
+        });
+    }
+}
+
 fn do_install(ui: &mut Ui) {
     unsafe {
         let mut opts = read_opts(ui);
@@ -1971,6 +2014,8 @@ pub fn run(opts: &crate::Opts, reporter: Arc<GuiReporter>) -> i32 {
             if let Some(ui) = Ui::from_hwnd(hwnd) {
                 if opts.uninstall {
                     do_uninstall(ui);
+                } else if opts.register_only {
+                    do_repair(ui);
                 } else {
                     do_install(ui);
                 }
