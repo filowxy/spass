@@ -1350,6 +1350,7 @@ unsafe fn read_opts(ui: &Ui) -> crate::Opts {
         explicit_dir: true, // the path box is authoritative in the GUI
         add_to_path: add_path,
         uninstall: false,
+        register_only: false,
         // The GUI asks its own questions up front, so the worker must never
         // try to read stdin.
         force: true,

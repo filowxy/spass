@@ -65,6 +65,9 @@ struct Opts {
     explicit_dir: bool,
     add_to_path: bool,
     uninstall: bool,
+    /// --register: write registry entries only, pointing at the spass.exe
+    /// already at install_dir. Copies nothing, touches no files.
+    register_only: bool,
     force: bool,
     silent: bool,
     install_rust: bool,
@@ -85,6 +88,7 @@ fn parse_args() -> Result<Opts, String> {
         explicit_dir: false,
         add_to_path: true,
         uninstall: false,
+        register_only: false,
         force: false,
         silent: false,
         install_rust: false,
@@ -105,6 +109,7 @@ fn parse_args() -> Result<Opts, String> {
                 std::process::exit(0);
             }
             "--uninstall" => o.uninstall = true,
+            "--register" => o.register_only = true,
             "--no-path" => o.add_to_path = false,
             "--force" | "-y" => o.force = true,
             "--silent" => o.silent = true,
@@ -210,6 +215,8 @@ fn print_help() {
          \x20   --force, -y          Overwrite an existing install without asking\n\
          \x20   --uninstall          Remove the installation (location read from\n\
          \x20                       the registry unless --install-dir is given)\n\
+         \x20   --register           Register an existing spass.exe (no files copied);\
+         \x20                       --install-dir must contain spass.exe\n\
          \x20   --gui                Force the window (a double-click opens it automatically)\n\
          \x20   --help, -h           Show this help\n\
          \x20   --version, -V        Show the version\n\n\
@@ -217,7 +224,9 @@ fn print_help() {
          \x20   spass-setup                          install for the current user\n\
          \x20   spass-setup --scope machine          install for all users (elevates)\n\
          \x20   spass-setup --install-rust           install Spass and fetch Rust too\n\
-         \x20   spass-setup --uninstall              remove Spass\n",
+         \x20   spass-setup --uninstall              remove Spass\n\
+         \x20   spass-setup --register --install-dir <DIR>  register an existing exe (no files copied)\n\
+        ",
         VERSION
     );
 }
@@ -292,7 +301,13 @@ fn main() {
         code = run_install_rust(&opts);
     }
     if code == 0 {
-        code = if opts.uninstall { run_uninstall(&opts) } else { run_install(&opts) };
+        code = if opts.uninstall {
+            run_uninstall(&opts)
+        } else if opts.register_only {
+            run_register(&opts)
+        } else {
+            run_install(&opts)
+        };
     }
     std::process::exit(code);
 }
@@ -468,6 +483,66 @@ fn run_install_rust(o: &Opts) -> i32 {
     } else {
         note("Not launched. Run the commands above when you are ready.");
     }
+    plain("");
+    0
+}
+
+/// Registry-only registration. Points Windows at an spass.exe that is
+/// already on disk (e.g. a build output under `D:/spass/compiler/target/release`)
+/// and writes the shell integration: Apps & features, `.saple` association and
+/// PATH. It never copies, moves or deletes any file, so it is safe to run
+/// against a source tree or build directory.
+fn run_register(o: &Opts) -> i32 {
+    step("Registering Spass (registry only)");
+
+    let exe = o.install_dir.join("spass.exe");
+    if !exe.is_file() {
+        error(&format!("no spass.exe at {}", exe.display()));
+        note("Pass --install-dir <DIR> pointing at the folder that contains spass.exe.");
+        return 1;
+    }
+
+    // Confirm the binary is real before advertising it to Windows.
+    match Command::new(&exe).arg("--version").output() {
+        Ok(out) if out.status.success() => {
+            let v = String::from_utf8_lossy(&out.stdout);
+            ok(&format!("found spass.exe ({})", v.trim()));
+        }
+        _ => {
+            error(&format!("{} is not a working spass.exe", exe.display()));
+            return 1;
+        }
+    }
+
+    // The uninstall command must reference a setup.exe that outlives this
+    // call: no uninstaller copy is placed in the install dir in this mode.
+    let setup = env::current_exe().unwrap_or_else(|_| PathBuf::from("spass-setup.exe"));
+    if installed::register(&installed::InstallEntry {
+        dir: &o.install_dir,
+        version: VERSION,
+        scope: o.scope,
+        uninstaller: installed::Uninstaller::External(&setup),
+    }) {
+        ok("registered in Apps & features");
+    } else {
+        error("could not write the Apps & features entry");
+        return 1;
+    }
+
+    if o.add_to_path {
+        add_to_path(o);
+    }
+    if assoc::register(&exe, o.scope) {
+        ok("registered the .saple file association");
+    } else {
+        note("could not register the .saple file association");
+    }
+
+    plain("");
+    plain("Spass is registered.");
+    plain(&format!("  exe      : {}", exe.display()));
+    plain(&format!("  location : {}", o.install_dir.display()));
+    plain("  No files were copied or changed.");
     plain("");
     0
 }
@@ -686,6 +761,7 @@ fn run_install(o: &Opts) -> i32 {
         dir: &o.install_dir,
         version: VERSION,
         scope: o.scope,
+        uninstaller: installed::Uninstaller::Bundled,
     }) {
         ok("registered in Apps & features");
     } else {
