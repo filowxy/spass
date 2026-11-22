@@ -18,6 +18,14 @@ test_module*.exe
 sculpt_output.txt
 test_output.txt
 
+# Development process notes: local agent state and the project log.
+# Never published - they describe how the compiler is being built,
+# not what it is.
+AGENTS.md
+findings.md
+progress.md
+task_plan.md
+
 # Development scripts and local agent state: never published
 *.py
 __pycache__/
